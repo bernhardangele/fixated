@@ -27,6 +27,7 @@
 #'   of `word_boundaries` when those columns are present there.
 #'
 #' @importFrom dplyr mutate
+#' @importFrom stats findInterval
 #'
 #' @export
 #'
@@ -48,34 +49,46 @@ assign_word_info <- function(fixations,
   stopifnot(all(c("word_nr", "word", "word_right_x_boundary") %in%
                   names(word_boundaries)))
 
-  fixations_with_words <- fixations
-  fixations_with_words$word_nr <- NA_integer_
-  fixations_with_words$word    <- NA_character_
+  fx         <- fixations$x
+  boundaries <- sort(word_boundaries$word_right_x_boundary)
+  n_words    <- length(boundaries)
+
+  # Vectorised assignment using findInterval:
+  # findInterval(x, v) returns k so that v[k] <= x < v[k+1].
+  # Adding 1 gives the index of the first word whose right boundary exceeds x,
+  # which is exactly the word the fixation lands on.
+  raw_idx <- stats::findInterval(fx, boundaries) + 1L
+
+  # Classify each fixation
+  before_sentence <- !is.na(fx) & fx < sentence_left_x_boundary
+  after_sentence  <- !is.na(fx) & !before_sentence & raw_idx > n_words
+
+  word_nr_vec <- integer(nrow(fixations))
+  word_vec    <- character(nrow(fixations))
+
+  word_nr_vec[is.na(fx)]         <- NA_integer_
+  word_vec[is.na(fx)]            <- NA_character_
+  word_nr_vec[before_sentence]   <- -1L
+  word_vec[before_sentence]      <- NA_character_
+  word_nr_vec[after_sentence]    <- -99L
+  word_vec[after_sentence]       <- NA_character_
+
+  valid <- !is.na(fx) & !before_sentence & !after_sentence
+  if (any(valid)) {
+    word_nr_vec[valid] <- word_boundaries$word_nr[raw_idx[valid]]
+    word_vec[valid]    <- word_boundaries$word[raw_idx[valid]]
+  }
+
+  out <- fixations
+  out$word_nr <- word_nr_vec
+  out$word    <- word_vec
 
   if ("sentence_nr" %in% names(word_boundaries)) {
-    fixations_with_words$sentence_nr <- word_boundaries$sentence_nr[[1L]]
+    out$sentence_nr <- word_boundaries$sentence_nr[[1L]]
   }
   if ("trial_nr" %in% names(word_boundaries)) {
-    fixations_with_words$trial_nr <- word_boundaries$trial_nr[[1L]]
+    out$trial_nr <- word_boundaries$trial_nr[[1L]]
   }
 
-  word_right_boundaries <- word_boundaries$word_right_x_boundary
-
-  for (i in seq_len(nrow(fixations))) {
-    fx <- fixations$x[[i]]
-
-    if (is.na(fx) || fx < sentence_left_x_boundary) {
-      fixations_with_words$word_nr[[i]] <- -1L
-      fixations_with_words$word[[i]]    <- NA_character_
-    } else if (fx >= max(word_right_boundaries, na.rm = TRUE)) {
-      fixations_with_words$word_nr[[i]] <- -99L
-      fixations_with_words$word[[i]]    <- NA_character_
-    } else {
-      word_idx <- which(fx < word_right_boundaries)[[1L]]
-      fixations_with_words$word_nr[[i]] <- word_boundaries$word_nr[[word_idx]]
-      fixations_with_words$word[[i]]    <- word_boundaries$word[[word_idx]]
-    }
-  }
-
-  fixations_with_words
+  out
 }

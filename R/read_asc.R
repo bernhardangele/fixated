@@ -116,6 +116,16 @@ read_asc <- function(path, eyes = c("L", "R"), sample_cols = character(0)) {
   FALSE
 }
 
+#' Extract a numeric value from a whitespace-split column vector
+#'
+#' Returns the numeric value of `cols[[idx]]` if `cols` is long enough,
+#' otherwise returns `NA_real_`.  Suppresses coercion warnings so that
+#' EyeLink's missing-data placeholder `"."` silently becomes `NA`.
+#' @noRd
+.asc_col_num <- function(cols, idx) {
+  if (length(cols) >= idx) suppressWarnings(as.numeric(cols[[idx]])) else NA_real_
+}
+
 #' Parse MSG lines from an ASC file into a per-sample metadata table
 #' @noRd
 .parse_asc_messages <- function(lines) {
@@ -171,12 +181,12 @@ read_asc <- function(path, eyes = c("L", "R"), sample_cols = character(0)) {
     for (i in seq_len(n)) {
       cols        <- split_lines[[i]]
       time_vec[i] <- suppressWarnings(as.integer(cols[[1L]]))
-      xl_vec[i]   <- if (length(cols) >= 2L) suppressWarnings(as.numeric(cols[[2L]])) else NA_real_
-      yl_vec[i]   <- if (length(cols) >= 3L) suppressWarnings(as.numeric(cols[[3L]])) else NA_real_
-      pl_vec[i]   <- if (length(cols) >= 4L) suppressWarnings(as.numeric(cols[[4L]])) else NA_real_
-      xr_vec[i]   <- if (length(cols) >= 5L) suppressWarnings(as.numeric(cols[[5L]])) else NA_real_
-      yr_vec[i]   <- if (length(cols) >= 6L) suppressWarnings(as.numeric(cols[[6L]])) else NA_real_
-      pr_vec[i]   <- if (length(cols) >= 7L) suppressWarnings(as.numeric(cols[[7L]])) else NA_real_
+      xl_vec[i]   <- .asc_col_num(cols, 2L)
+      yl_vec[i]   <- .asc_col_num(cols, 3L)
+      pl_vec[i]   <- .asc_col_num(cols, 4L)
+      xr_vec[i]   <- .asc_col_num(cols, 5L)
+      yr_vec[i]   <- .asc_col_num(cols, 6L)
+      pr_vec[i]   <- .asc_col_num(cols, 7L)
     }
 
     left_rows <- dplyr::tibble(

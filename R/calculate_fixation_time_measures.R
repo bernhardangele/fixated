@@ -85,8 +85,7 @@ calculate_fixation_time_measures <- function(fixations, words) {
     dplyr::summarize(
       ffd = .data$duration[[1L]],
       gd  = sum(.data$duration),
-      sfd = ifelse(.data$duration[[1L]] == sum(.data$duration),
-                   .data$duration[[1L]], NA_integer_),
+      sfd = ifelse(dplyr::n() == 1L, .data$duration[[1L]], NA_integer_),
       .groups = "drop"
     )
 
