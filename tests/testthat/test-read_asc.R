@@ -3,7 +3,7 @@ test_that("read_asc returns a list with samples and events", {
   result <- read_asc(asc_file)
 
   expect_type(result, "list")
-  expect_named(result, c("samples", "events"))
+  expect_true(all(c("samples", "events") %in% names(result)))
 })
 
 test_that("read_asc samples has required columns", {

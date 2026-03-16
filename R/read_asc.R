@@ -2,11 +2,13 @@
 #'
 #' @description
 #' Parses an EyeLink ASC file (converted from EDF with `edf2asc`) and returns
-#' a named list with two data frames:
+#' a named list with data frames for samples, events, and (when present)
+#' word boundary and calibration information.
 #'
-#' * `samples` – raw gaze samples (one row per sample).
-#' * `events`  – fixation, saccade, and blink events reported by the tracker
-#'   parser.
+#' Both **monocular** (single eye, 4 data columns) and **binocular** (both
+#' eyes, 7 data columns) sample formats are supported.  Binocular files are
+#' automatically detected from the `START` header line and produce two rows
+#' per sample timestamp—one for each eye.
 #'
 #' The coordinate system origin follows the EyeLink convention: **(0, 0) is
 #' the top-left corner** of the display, with x increasing rightward and y
@@ -23,19 +25,26 @@
 #'   \describe{
 #'     \item{`samples`}{A [tibble][tibble::tibble] with columns
 #'       `time` (integer, ms), `x` (double, pixels), `y` (double, pixels),
-#'       `pupil` (double), `eye` (character, `"L"` or `"R"`), and any
-#'       trial-metadata columns injected via `TRIALID` / `TRIAL_VAR`
-#'       messages.}
+#'       `pupil` (double), `eye` (character, `"L"` or `"R"`).}
 #'     \item{`events`}{A [tibble][tibble::tibble] with columns `type`
 #'       (`"FIXATION"`, `"SACCADE"`, or `"BLINK"`), `eye`, `start_time`,
 #'       `end_time`, `duration`, `x_start`, `y_start`, `x_end`, `y_end`,
-#'       `avg_x`, `avg_y`, `avg_pupil`, and trial-metadata columns.}
+#'       `avg_x`, `avg_y`, `avg_pupil`.}
+#'     \item{`word_boundaries`}{A [tibble][tibble::tibble] with columns
+#'       `trial_nr`, `item_nr`, `word_nr`, `word`, `right_boundary`
+#'       (pixels), parsed from `TRIAL … ITEM … WORD … RIGHT_BOUNDARY …`
+#'       messages written by OpenSesame.  `NULL` when no such messages are
+#'       found.}
+#'     \item{`calibration`}{A [tibble][tibble::tibble] with columns `eye`,
+#'       `quality`, `avg_error`, `max_error`, `offset_deg`, `x_offset`,
+#'       `y_offset`, parsed from `!CAL VALIDATION` messages.  `NULL` when
+#'       no such messages are found.}
 #'   }
 #'
 #' @importFrom dplyr tibble mutate filter bind_rows select rename arrange
 #'   if_else group_by summarise
 #' @importFrom stringr str_detect str_split str_trim str_extract str_remove
-#'   str_starts str_squish
+#'   str_starts str_squish str_match
 #' @importFrom rlang .data
 #'
 #' @export
@@ -47,27 +56,65 @@
 #'   head(result$samples)
 #'   head(result$events)
 #' }
+#'
+#' # Binocular OpenSesame-style file with word boundaries
+#' asc_bino <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+#' if (file.exists(asc_bino)) {
+#'   result <- read_asc(asc_bino)
+#'   head(result$samples)
+#'   head(result$word_boundaries)
+#'   head(result$calibration)
+#' }
 read_asc <- function(path, eyes = c("L", "R"), sample_cols = character(0)) {
   stopifnot(is.character(path), length(path) == 1L, file.exists(path))
   eyes <- match.arg(eyes, c("L", "R"), several.ok = TRUE)
 
   lines <- readLines(path, warn = FALSE)
 
+  # ---- detect binocular recording format -----------------------------------
+  is_binocular <- .detect_asc_binocular(lines)
+
   # ---- collect trial metadata from MSG lines --------------------------------
   trial_meta <- .parse_asc_messages(lines)
 
   # ---- parse raw samples ----------------------------------------------------
-  samples <- .parse_asc_samples(lines, eyes, trial_meta)
+  samples <- .parse_asc_samples(lines, eyes, trial_meta, is_binocular)
 
   # ---- parse events (EFIX, ESACC, EBLINK) -----------------------------------
   events <- .parse_asc_events(lines, eyes, trial_meta)
 
-  list(samples = samples, events = events)
+  # ---- parse word boundaries (OpenSesame TRIAL/ITEM/WORD messages) ----------
+  word_boundaries <- .parse_asc_word_boundaries(lines)
+
+  # ---- parse calibration/validation info ------------------------------------
+  calibration <- .parse_asc_calibration(lines)
+
+  list(
+    samples         = samples,
+    events          = events,
+    word_boundaries = word_boundaries,
+    calibration     = calibration
+  )
 }
 
 # ---------------------------------------------------------------------------
 # Internal helpers for read_asc()
 # ---------------------------------------------------------------------------
+
+#' Detect whether an ASC file contains binocular recordings
+#'
+#' Looks for a `START` header line that lists both `LEFT` and `RIGHT`.
+#' @noRd
+.detect_asc_binocular <- function(lines) {
+  start_idx <- which(stringr::str_starts(lines, "START"))
+  for (i in start_idx) {
+    if (stringr::str_detect(lines[[i]], "LEFT") &&
+        stringr::str_detect(lines[[i]], "RIGHT")) {
+      return(TRUE)
+    }
+  }
+  FALSE
+}
 
 #' Parse MSG lines from an ASC file into a per-sample metadata table
 #' @noRd
@@ -93,10 +140,13 @@ read_asc <- function(path, eyes = c("L", "R"), sample_cols = character(0)) {
 }
 
 #' Parse raw sample lines from an ASC file
+#'
+#' Handles both monocular (4 data columns: time, x, y, pupil) and binocular
+#' (7 data columns: time, xl, yl, pl, xr, yr, pr) formats.  Binocular files
+#' produce two rows per timestamp, one per eye.
 #' @noRd
-.parse_asc_samples <- function(lines, eyes, trial_meta) {
-  # Sample lines: <time>\t<x>\t<y>\t<pupil>[...] or space-separated
-  # They do NOT start with a letter keyword.
+.parse_asc_samples <- function(lines, eyes, trial_meta, is_binocular = FALSE) {
+  # Sample lines start with a digit and are NOT keyword lines
   sample_pattern <- "^[0-9]"
   s_idx <- which(stringr::str_detect(lines, sample_pattern))
   if (length(s_idx) == 0L) {
@@ -104,43 +154,82 @@ read_asc <- function(path, eyes = c("L", "R"), sample_cols = character(0)) {
   }
 
   raw <- lines[s_idx]
-  # Split on whitespace; take first 4 columns
   split_lines <- stringr::str_split(raw, "\\s+")
   n <- length(split_lines)
 
-  time_vec  <- integer(n)
-  x_vec     <- numeric(n)
-  y_vec     <- numeric(n)
-  pupil_vec <- numeric(n)
-  eye_vec   <- character(n)
+  if (is_binocular) {
+    # Binocular format: time | xl | yl | pl | xr | yr | pr [| flags...]
+    # Produces two rows per sample line (one for each eye)
+    time_vec  <- integer(n)
+    xl_vec    <- numeric(n)
+    yl_vec    <- numeric(n)
+    pl_vec    <- numeric(n)
+    xr_vec    <- numeric(n)
+    yr_vec    <- numeric(n)
+    pr_vec    <- numeric(n)
 
-  for (i in seq_len(n)) {
-    cols <- split_lines[[i]]
-    time_vec[[i]]  <- suppressWarnings(as.integer(cols[[1]]))
-    x_val <- suppressWarnings(as.numeric(cols[[2]]))
-    y_val <- suppressWarnings(as.numeric(cols[[3]]))
-    p_val <- suppressWarnings(as.numeric(cols[[4]]))
-    x_vec[[i]]     <- if (is.na(x_val)) NA_real_ else x_val
-    y_vec[[i]]     <- if (is.na(y_val)) NA_real_ else y_val
-    pupil_vec[[i]] <- if (is.na(p_val)) NA_real_ else p_val
-    # EyeLink binocular ASC files have an additional column indicating eye
-    eye_vec[[i]] <- if (length(cols) >= 5L && cols[[5]] %in% c("L", "R")) {
-      cols[[5]]
-    } else {
-      "L" # monocular default
+    for (i in seq_len(n)) {
+      cols        <- split_lines[[i]]
+      time_vec[i] <- suppressWarnings(as.integer(cols[[1L]]))
+      xl_vec[i]   <- if (length(cols) >= 2L) suppressWarnings(as.numeric(cols[[2L]])) else NA_real_
+      yl_vec[i]   <- if (length(cols) >= 3L) suppressWarnings(as.numeric(cols[[3L]])) else NA_real_
+      pl_vec[i]   <- if (length(cols) >= 4L) suppressWarnings(as.numeric(cols[[4L]])) else NA_real_
+      xr_vec[i]   <- if (length(cols) >= 5L) suppressWarnings(as.numeric(cols[[5L]])) else NA_real_
+      yr_vec[i]   <- if (length(cols) >= 6L) suppressWarnings(as.numeric(cols[[6L]])) else NA_real_
+      pr_vec[i]   <- if (length(cols) >= 7L) suppressWarnings(as.numeric(cols[[7L]])) else NA_real_
     }
+
+    left_rows <- dplyr::tibble(
+      time  = time_vec,
+      x     = xl_vec,
+      y     = yl_vec,
+      pupil = pl_vec,
+      eye   = "L"
+    )
+    right_rows <- dplyr::tibble(
+      time  = time_vec,
+      x     = xr_vec,
+      y     = yr_vec,
+      pupil = pr_vec,
+      eye   = "R"
+    )
+    out <- dplyr::bind_rows(left_rows, right_rows)
+  } else {
+    # Monocular format: time | x | y | pupil [| eye]
+    time_vec  <- integer(n)
+    x_vec     <- numeric(n)
+    y_vec     <- numeric(n)
+    pupil_vec <- numeric(n)
+    eye_vec   <- character(n)
+
+    for (i in seq_len(n)) {
+      cols <- split_lines[[i]]
+      time_vec[[i]]  <- suppressWarnings(as.integer(cols[[1L]]))
+      x_val <- suppressWarnings(as.numeric(cols[[2L]]))
+      y_val <- suppressWarnings(as.numeric(cols[[3L]]))
+      p_val <- suppressWarnings(as.numeric(cols[[4L]]))
+      x_vec[[i]]     <- if (is.na(x_val)) NA_real_ else x_val
+      y_vec[[i]]     <- if (is.na(y_val)) NA_real_ else y_val
+      pupil_vec[[i]] <- if (is.na(p_val)) NA_real_ else p_val
+      # Optional 5th column with eye label (some EyeLink formats)
+      eye_vec[[i]] <- if (length(cols) >= 5L && cols[[5L]] %in% c("L", "R")) {
+        cols[[5L]]
+      } else {
+        "L" # monocular default
+      }
+    }
+
+    out <- dplyr::tibble(
+      time  = time_vec,
+      x     = x_vec,
+      y     = y_vec,
+      pupil = pupil_vec,
+      eye   = eye_vec
+    )
   }
 
-  out <- dplyr::tibble(
-    time  = time_vec,
-    x     = x_vec,
-    y     = y_vec,
-    pupil = pupil_vec,
-    eye   = eye_vec
-  )
-
   out <- dplyr::filter(out, .data$eye %in% eyes, !is.na(.data$time))
-  out <- dplyr::arrange(out, .data$time)
+  out <- dplyr::arrange(out, .data$time, .data$eye)
   out
 }
 
@@ -245,6 +334,60 @@ read_asc <- function(path, eyes = c("L", "R"), sample_cols = character(0)) {
   rows <- rows[!vapply(rows, is.null, logical(1))]
   if (length(rows) == 0L) return(.empty_events_tibble())
   dplyr::bind_rows(rows)
+}
+
+#' Parse word boundary messages written by OpenSesame
+#'
+#' Expects lines of the form:
+#'   `MSG\t<time> TRIAL <trial> ITEM <item> WORD <word_nr> <word> RIGHT_BOUNDARY <x>`
+#'
+#' @return A tibble with columns `trial_nr`, `item_nr`, `word_nr`, `word`,
+#'   `right_boundary`, or `NULL` when no such messages are present.
+#' @noRd
+.parse_asc_word_boundaries <- function(lines) {
+  pattern <- "^MSG\\t\\d+\\s+TRIAL\\s+(\\d+)\\s+ITEM\\s+(\\d+)\\s+WORD\\s+(\\d+)\\s+(\\S+)\\s+RIGHT_BOUNDARY\\s+(\\d+)"
+  wb_idx <- which(stringr::str_detect(lines, pattern))
+  if (length(wb_idx) == 0L) return(NULL)
+
+  m <- stringr::str_match(lines[wb_idx], pattern)
+  dplyr::tibble(
+    trial_nr        = as.integer(m[, 2L]),
+    item_nr         = as.integer(m[, 3L]),
+    word_nr         = as.integer(m[, 4L]),
+    word            = m[, 5L],
+    right_boundary  = as.integer(m[, 6L])
+  )
+}
+
+#' Parse calibration/validation summary messages
+#'
+#' Expects lines of the form:
+#'   `MSG\t<time> !CAL VALIDATION HV9 LR LEFT/RIGHT <quality> ERROR <avg> avg. <max> max OFFSET <deg> deg. <x>,<y> pix.`
+#'
+#' @return A tibble with columns `eye`, `quality`, `avg_error`, `max_error`,
+#'   `offset_deg`, `x_offset`, `y_offset`, or `NULL` when no such messages
+#'   are present.
+#' @noRd
+.parse_asc_calibration <- function(lines) {
+  pattern <- paste0(
+    "MSG\\t\\d+\\s+!CAL\\s+VALIDATION\\s+\\S+\\s+\\S+\\s+",
+    "(LEFT|RIGHT)\\s+(\\w+)\\s+ERROR\\s+([\\d.]+)\\s+avg\\.\\s+",
+    "([\\d.]+)\\s+max\\s+OFFSET\\s+([\\d.]+)\\s+deg\\.\\s+",
+    "([-\\d.]+),([-\\d.]+)\\s+pix\\."
+  )
+  cal_idx <- which(stringr::str_detect(lines, pattern))
+  if (length(cal_idx) == 0L) return(NULL)
+
+  m <- stringr::str_match(lines[cal_idx], pattern)
+  dplyr::tibble(
+    eye        = m[, 2L],
+    quality    = m[, 3L],
+    avg_error  = as.numeric(m[, 4L]),
+    max_error  = as.numeric(m[, 5L]),
+    offset_deg = as.numeric(m[, 6L]),
+    x_offset   = as.numeric(m[, 7L]),
+    y_offset   = as.numeric(m[, 8L])
+  )
 }
 
 #' Empty samples tibble prototype
