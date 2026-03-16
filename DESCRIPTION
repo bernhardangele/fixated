@@ -1,0 +1,26 @@
+Package: fixated
+Title: Analyze Eye Movement Data from Eye Trackers
+Version: 0.1.0
+Authors@R: 
+    person("Bernhard", "Angele", , "bernhard.angele@gmail.com", role = c("aut", "cre"))
+Description: Read raw samples and fixation/saccade events from CSV or ASC files
+    saved by eye trackers (e.g., SR Research EyeLink). Optionally detect fixations
+    using dispersion-based algorithms, clean and merge fixations, eliminate
+    outliers, read regions of interest for words in sentences from a CSV, and
+    compile word-based eye-movement measures such as first fixation duration,
+    gaze duration, go-past time, and total viewing time.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports:
+    dplyr (>= 1.1.0),
+    readr (>= 2.1.0),
+    stringr (>= 1.5.0),
+    rlang (>= 1.1.0)
+Suggests:
+    testthat (>= 3.0.0),
+    ggplot2 (>= 3.4.0),
+    knitr,
+    rmarkdown
+Config/testthat/edition: 3
