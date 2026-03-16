@@ -36,7 +36,7 @@
 #'   [assign_word_info()]), or `NULL` when no fixations remain after
 #'   processing.
 #'
-#' @importFrom dplyr filter mutate is_tibble
+#' @importFrom dplyr filter mutate
 #'
 #' @export
 #'

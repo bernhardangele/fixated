@@ -27,7 +27,6 @@
 #'   of `word_boundaries` when those columns are present there.
 #'
 #' @importFrom dplyr mutate
-#' @importFrom stats findInterval
 #'
 #' @export
 #'
@@ -57,7 +56,7 @@ assign_word_info <- function(fixations,
   # findInterval(x, v) returns k so that v[k] <= x < v[k+1].
   # Adding 1 gives the index of the first word whose right boundary exceeds x,
   # which is exactly the word the fixation lands on.
-  raw_idx <- stats::findInterval(fx, boundaries) + 1L
+  raw_idx <- findInterval(fx, boundaries) + 1L
 
   # Classify each fixation
   before_sentence <- !is.na(fx) & fx < sentence_left_x_boundary

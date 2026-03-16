@@ -61,3 +61,188 @@ test_that("read_asc fixation durations are positive", {
     expect_true(all(fix$duration > 0L))
   }
 })
+
+# ---------------------------------------------------------------------------
+# Trial structure (trial_db, trial_nr, get_trial)
+# ---------------------------------------------------------------------------
+
+test_that("read_asc returns trial_db for OpenSesame binocular file", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file)
+  expect_true("trial_db" %in% names(result))
+  tdb <- result$trial_db
+  expect_false(is.null(tdb))
+  expect_true(nrow(tdb) >= 1L)
+})
+
+test_that("trial_db has required columns", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file)
+  tdb    <- result$trial_db
+  expected <- c("trial_nr", "item_nr", "t_trial_start",
+                "t_recording_start", "t_gaze_target_on", "t_gaze_target_off",
+                "t_display_on", "t_display_off", "t_trial_end",
+                "has_display_off")
+  expect_true(all(expected %in% names(tdb)))
+})
+
+test_that("trial_db captures DISPLAY ON/OFF timestamps", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file)
+  tdb    <- result$trial_db
+  expect_true(!is.na(tdb$t_display_on[[1L]]))
+  expect_true(!is.na(tdb$t_display_off[[1L]]))
+  expect_true(tdb$has_display_off[[1L]])
+  # DISPLAY ON must precede DISPLAY OFF
+  expect_true(tdb$t_display_on[[1L]] < tdb$t_display_off[[1L]])
+})
+
+test_that("trial_db captures GAZE TARGET ON timestamp", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file)
+  tdb    <- result$trial_db
+  expect_true(!is.na(tdb$t_gaze_target_on[[1L]]))
+})
+
+test_that("trial_db captures trial_end from END line", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file)
+  tdb    <- result$trial_db
+  expect_true(!is.na(tdb$t_trial_end[[1L]]))
+})
+
+test_that("read_asc adds trial_nr column to samples for OpenSesame file", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file)
+  expect_true("trial_nr" %in% names(result$samples))
+})
+
+test_that("read_asc adds trial_nr column to events for OpenSesame file", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file)
+  expect_true("trial_nr" %in% names(result$events))
+})
+
+test_that("trial_db parses OpenSesame var messages when parse_vars = TRUE", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file, parse_vars = TRUE)
+  tdb    <- result$trial_db
+  # The example file contains 'var subject_nr 1'
+  expect_true("subject_nr" %in% names(tdb))
+  expect_equal(tdb$subject_nr[[1L]], "1")
+})
+
+test_that("trial_db has no var columns when parse_vars = FALSE", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file, parse_vars = FALSE)
+  tdb    <- result$trial_db
+  base_cols <- c("trial_nr", "item_nr", "t_trial_start", "t_recording_start",
+                 "t_gaze_target_on", "t_gaze_target_off", "t_display_on",
+                 "t_display_off", "t_trial_end", "has_display_off")
+  expect_equal(sort(names(tdb)), sort(base_cols))
+})
+
+test_that("read_asc returns NULL trial_db for non-OpenSesame file", {
+  asc_file <- system.file("extdata", "example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "example.asc not found")
+  result <- read_asc(asc_file)
+  expect_null(result$trial_db)
+})
+
+test_that("read_asc custom eye_tracker with NULL pattern returns NULL trial_db", {
+  asc_file <- system.file("extdata", "example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "example.asc not found")
+  result <- read_asc(asc_file, eye_tracker = "custom")
+  expect_null(result$trial_db)
+})
+
+# ---------------------------------------------------------------------------
+# get_trial()
+# ---------------------------------------------------------------------------
+
+test_that("get_trial returns list with samples and events", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file)
+  trial0 <- get_trial(result, 0L)
+  expect_type(trial0, "list")
+  expect_true(all(c("samples", "events") %in% names(trial0)))
+})
+
+test_that("get_trial filters to correct trial", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file)
+  trial0 <- get_trial(result, 0L)
+  # All rows must have trial_nr == 0
+  if (nrow(trial0$samples) > 0L) {
+    expect_true(all(trial0$samples$trial_nr == 0L))
+  }
+  if (nrow(trial0$events) > 0L) {
+    expect_true(all(trial0$events$trial_nr == 0L))
+  }
+})
+
+test_that("get_trial errors when trial_nr column is missing", {
+  bad_result <- list(
+    samples = dplyr::tibble(time = 1:3, x = 1:3, y = 1:3),
+    events  = dplyr::tibble(type = "FIXATION")
+  )
+  expect_error(get_trial(bad_result, 1L), "trial_nr")
+})
+
+# ---------------------------------------------------------------------------
+# get_eyelink_fixations()
+# ---------------------------------------------------------------------------
+
+test_that("get_eyelink_fixations returns FIXATION rows from events", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file)
+  fix    <- get_eyelink_fixations(result$events)
+  expect_true(is.data.frame(fix))
+  expected_cols <- c("start_time", "end_time", "duration", "avg_x", "avg_y")
+  expect_true(all(expected_cols %in% names(fix)))
+})
+
+test_that("get_eyelink_fixations preserves trial_nr when present", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file)
+  if ("trial_nr" %in% names(result$events)) {
+    fix <- get_eyelink_fixations(result$events)
+    expect_true("trial_nr" %in% names(fix))
+  }
+})
+
+test_that("get_eyelink_fixations errors on missing required columns", {
+  bad_events <- dplyr::tibble(type = "FIXATION", eye = "R")
+  expect_error(get_eyelink_fixations(bad_events), "missing required columns")
+})
+
+# ---------------------------------------------------------------------------
+# detect_fixations() saccades method
+# ---------------------------------------------------------------------------
+
+test_that("detect_fixations errors when saccades package is unavailable", {
+  skip_if(requireNamespace("saccades", quietly = TRUE),
+          "saccades package is installed; skipping unavailability test")
+  samples <- dplyr::tibble(
+    time = seq(0L, 500L, by = 10L),
+    x    = rep(300, 51),
+    y    = rep(400, 51)
+  )
+  expect_error(
+    detect_fixations(samples, method = "saccades"),
+    "saccades"
+  )
+})

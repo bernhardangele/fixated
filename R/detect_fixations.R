@@ -12,6 +12,12 @@
 #' Salvucci, D. D., & Goldberg, J. H. (2000). Identifying fixations and
 #' saccades in eye-tracking protocols.  *ETRA*, pp. 71–78.
 #'
+#' An optional `"saccades"` method is available when the
+#' [saccades](https://github.com/tmalsburg/saccades) package is installed.
+#' That package implements a different velocity-based fixation-detection
+#' approach.  Pass `method = "saccades"` to use it; an error is raised if
+#' the package is not available.
+#'
 #' @param samples A data frame of raw gaze samples with (at minimum) columns:
 #'   * `time`  – integer timestamp in milliseconds.
 #'   * `x`     – horizontal gaze position in pixels.
@@ -20,13 +26,16 @@
 #'   milliseconds.  Defaults to `100`.
 #' @param max_dispersion Numeric scalar.  Maximum allowed dispersion (radius
 #'   in pixels) within a fixation window; computed as half the sum of the
-#'   x-range and y-range.  Defaults to `25`.
+#'   x-range and y-range.  Only used when `method = "idt"`.  Defaults to `25`.
 #' @param trial_col Character scalar or `NULL`.  Name of the column that
 #'   identifies trials.  When supplied, fixation detection is run separately
 #'   within each trial.  Defaults to `"trial"`.
 #' @param eye_col Character scalar or `NULL`.  Name of the column that
 #'   identifies which eye each sample belongs to.  When supplied, fixation
 #'   detection is run separately for each eye.  Defaults to `"eye"`.
+#' @param method Character scalar.  Fixation detection algorithm to use.
+#'   `"idt"` (default) uses the built-in I-DT algorithm.  `"saccades"` uses
+#'   the \pkg{saccades} package (must be installed separately).
 #'
 #' @return A [tibble][tibble::tibble] with one row per detected fixation and
 #'   columns:
@@ -40,7 +49,7 @@
 #'     \item{`avg_x`}{Double.  Mean x position during the fixation (px).}
 #'     \item{`avg_y`}{Double.  Mean y position during the fixation (px).}
 #'     \item{`n_samples`}{Integer.  Number of samples contributing to the
-#'       fixation.}
+#'       fixation.  (`NA` when `method = "saccades"`.)}
 #'   }
 #'   If `trial_col` or `eye_col` are provided and present in `samples`, those
 #'   columns are also included in the output.
@@ -64,13 +73,27 @@ detect_fixations <- function(
     min_duration   = 100,
     max_dispersion = 25,
     trial_col      = "trial",
-    eye_col        = "eye"
+    eye_col        = "eye",
+    method         = c("idt", "saccades")
 ) {
   stopifnot(is.data.frame(samples))
   required_cols <- c("time", "x", "y")
   missing_cols  <- setdiff(required_cols, names(samples))
   if (length(missing_cols) > 0L) {
     stop("samples is missing required columns: ", paste(missing_cols, collapse = ", "))
+  }
+
+  method <- match.arg(method)
+
+  if (method == "saccades") {
+    if (!requireNamespace("saccades", quietly = TRUE)) {
+      stop(
+        "The 'saccades' package is required for method = \"saccades\" but ",
+        "is not installed.  Install it with:\n",
+        "  remotes::install_github(\"tmalsburg/saccades\")"
+      )
+    }
+    return(.saccades_fixations(samples, min_duration, trial_col, eye_col))
   }
 
   group_cols <- character(0)
@@ -195,4 +218,77 @@ detect_fixations <- function(
     avg_y      = numeric(0),
     n_samples  = integer(0)
   )
+}
+
+# ---------------------------------------------------------------------------
+# saccades-package bridge
+# ---------------------------------------------------------------------------
+
+#' Fixation detection via the saccades package
+#'
+#' Delegates to \code{saccades::detect.fixations()} and reshapes the result
+#' to match the column layout of \code{.idt_fixations()}.
+#' @noRd
+.saccades_fixations <- function(samples, min_duration, trial_col, eye_col) {
+  # saccades::detect.fixations() expects a data frame with columns
+  # time, x, y (and optionally trial).  It returns a data frame with
+  # columns x, y, start, end, dur, and optionally trial.
+  inp <- samples[, c("time", "x", "y"), drop = FALSE]
+
+  group_cols <- character(0)
+  if (!is.null(trial_col) && trial_col %in% names(samples)) {
+    inp[[trial_col]] <- samples[[trial_col]]
+    group_cols       <- c(group_cols, trial_col)
+  }
+  if (!is.null(eye_col) && eye_col %in% names(samples)) {
+    group_cols <- c(group_cols, eye_col)
+  }
+
+  if (length(group_cols) == 0L) {
+    raw <- saccades::detect.fixations(inp)
+    out <- .reshape_saccades_output(raw, min_duration)
+    return(out)
+  }
+
+  # Run per group
+  group_keys <- unique(samples[, group_cols, drop = FALSE])
+  results    <- vector("list", nrow(group_keys))
+
+  for (i in seq_len(nrow(group_keys))) {
+    mask <- rep(TRUE, nrow(samples))
+    for (col in group_cols) {
+      mask <- mask & (samples[[col]] == group_keys[[col]][[i]])
+    }
+    sub_inp <- inp[mask, , drop = FALSE]
+    if (nrow(sub_inp) == 0L) next
+    raw    <- saccades::detect.fixations(sub_inp)
+    fix_df <- .reshape_saccades_output(raw, min_duration)
+    for (col in group_cols) {
+      fix_df[[col]] <- group_keys[[col]][[i]]
+    }
+    results[[i]] <- fix_df
+  }
+
+  out <- dplyr::bind_rows(results)
+  measure_cols <- c("start_time", "end_time", "duration", "avg_x", "avg_y", "n_samples")
+  col_order    <- c(group_cols, measure_cols)
+  col_order    <- col_order[col_order %in% names(out)]
+  out[, col_order, drop = FALSE]
+}
+
+#' Reshape saccades::detect.fixations() output to fixated column layout
+#' @noRd
+.reshape_saccades_output <- function(raw, min_duration) {
+  if (is.null(raw) || nrow(raw) == 0L) return(.empty_fixations_tibble())
+  # saccades output columns: x, y, start, end, dur (and possibly trial)
+  out <- dplyr::tibble(
+    start_time = as.integer(raw$start),
+    end_time   = as.integer(raw$end),
+    duration   = as.integer(raw$dur),
+    avg_x      = as.numeric(raw$x),
+    avg_y      = as.numeric(raw$y),
+    n_samples  = NA_integer_
+  )
+  out <- dplyr::filter(out, .data$duration >= min_duration)
+  out
 }
