@@ -1,0 +1,28 @@
+fit_brms_for_sampling_rate <- function(data, 
+                                       priors = set_prior("normal(0,200)", class = "b"),
+                                       formula,
+                                       warmup = 2000,
+                                       iter = 10000,
+                                       chains = 4,
+                                       cores = 4,
+                                       threads = threading(2),
+                                       seed = NA,
+                                       control = NULL
+){
+  brm(data = data,
+      formula = formula,
+      warmup = warmup,
+      iter = iter,
+      chains = chains,
+      prior = priors,
+      sample_prior = "yes",
+      family = exgaussian(),
+      #init = "0",
+      #control = list(adapt_delta =  0.8),
+      control = control,
+      cores = cores,
+      backend = "cmdstanr",
+      threads = threads,
+      seed = seed,
+      silent = 0)
+}
