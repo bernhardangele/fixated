@@ -209,7 +209,7 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
         samp <- dplyr::filter(samp, .data$trial_nr == tnr)
       }
       if ("eye" %in% names(samp)) {
-        samp <- dplyr::filter(samp, .data$eye == eye)
+        samp <- dplyr::filter(samp, .data$eye == !!eye)
       }
       dt  <- display_times()
       if (input$filter_display_on  && !is.na(dt$t_on))  {
