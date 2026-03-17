@@ -21,6 +21,8 @@ Imports:
 Suggests:
     testthat (>= 3.0.0),
     ggplot2 (>= 3.4.0),
+    jpeg,
     knitr,
+    png,
     rmarkdown
 Config/testthat/edition: 3
