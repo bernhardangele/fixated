@@ -20,9 +20,13 @@ Imports:
     rlang (>= 1.1.0)
 Suggests:
     testthat (>= 3.0.0),
+    base64enc,
+    DT,
     ggplot2 (>= 3.4.0),
     jpeg,
     knitr,
+    plotly,
     png,
-    rmarkdown
+    rmarkdown,
+    shiny
 Config/testthat/edition: 3
