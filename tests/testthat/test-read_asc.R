@@ -136,8 +136,8 @@ test_that("trial_db parses OpenSesame var messages when parse_vars = TRUE", {
   result <- read_asc(asc_file, parse_vars = TRUE)
   tdb    <- result$trial_db
   # The example file contains 'var subject_nr 1'
-  expect_true("subject_nr" %in% names(tdb))
-  expect_equal(tdb$subject_nr[[1L]], "1")
+  expect_true("os_subject_nr" %in% names(tdb))
+  expect_equal(tdb$os_subject_nr[[1L]], "1")
 })
 
 test_that("trial_db has no var columns when parse_vars = FALSE", {

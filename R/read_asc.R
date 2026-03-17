@@ -164,18 +164,22 @@ read_asc <- function(path,
       }
 
       # Get x_start from trial_db or default
-      s_start_x <- if ("sentence_start_x" %in% names(trial_info)) {
+      s_start_x <- if ("os_sentence_start_x" %in% names(trial_info)) {
+        trial_info$os_sentence_start_x[[1L]]
+      } else if ("sentence_start_x" %in% names(trial_info)) {
         trial_info$sentence_start_x[[1L]]
       } else {
-        warning("Column 'sentence_start_x' not found in trial_db for trial ", tr, ". Defaulting to 125.")
+        warning("Column 'os_sentence_start_x' not found in trial_db for trial ", tr, ". Defaulting to 125.")
         125
       }
 
       # Get height from trial_db or default
-      s_height <- if ("height" %in% names(trial_info)) {
+      s_height <- if ("os_height" %in% names(trial_info)) {
+        as.numeric(trial_info$os_height[[1L]])
+      } else if ("height" %in% names(trial_info)) {
         as.numeric(trial_info$height[[1L]])
       } else {
-        warning("Column 'height' not found in trial_db for trial ", tr, ". Defaulting to 1080.")
+        warning("Column 'os_height' not found in trial_db for trial ", tr, ". Defaulting to 1080.")
         1080
       }
 
@@ -765,23 +769,27 @@ read_asc <- function(path,
   var_values <- var_values[valid]
 
   unique_vars <- unique(var_names)
+  prefixed_vars <- paste0("os_", unique_vars)
+
   # Pre-build a matrix of NA strings, then fill in values
   vars_wide <- matrix(NA_character_,
                        nrow     = n_trials,
                        ncol     = length(unique_vars),
-                       dimnames = list(NULL, unique_vars))
+                       dimnames = list(NULL, prefixed_vars))
 
-  for (vname in unique_vars) {
+  for (i in seq_along(unique_vars)) {
+    vname    <- unique_vars[i]
+    p_vname  <- prefixed_vars[i]
     is_v     <- var_names == vname
     v_trials <- ti[is_v]
     v_vals   <- var_values[is_v]
     # Keep last occurrence per trial (lines are in ascending order)
     dup              <- duplicated(v_trials, fromLast = TRUE)
-    vars_wide[v_trials[!dup], vname] <- v_vals[!dup]
+    vars_wide[v_trials[!dup], p_vname] <- v_vals[!dup]
   }
 
-  for (vname in unique_vars) {
-    trial_db[[vname]] <- vars_wide[, vname]
+  for (p_vname in prefixed_vars) {
+    trial_db[[p_vname]] <- vars_wide[, p_vname]
   }
   trial_db
 }
