@@ -8,17 +8,17 @@ calculate_fixation_time_measures(fixations, words)
 }
 \arguments{
 \item{fixations}{A data frame of fixations for a single trial.  Must
-contain columns \code{word_nr}, \code{duration}, \code{too_short}, \code{too_long},
+contain columns \code{word_id}, \code{duration}, \code{too_short}, \code{too_long},
 \code{merged}, \code{near_blink}.}
 
 \item{words}{A data frame of word information for the trial (e.g., from
-\code{\link[=get_word_info_from_msg]{get_word_info_from_msg()}}).  Must contain columns \code{word_nr}, \code{word},
-and \code{word_right_x_boundary}.}
+\code{\link[=get_word_info_from_msg]{get_word_info_from_msg()}}).  Must contain columns \code{word_id}, \code{word},
+and \code{x_end}.}
 }
 \value{
 A data frame with one row per word and the following columns:
 \describe{
-\item{\code{word_nr}}{Word number.}
+\item{\code{word_id}}{Word number.}
 \item{\code{word}}{Word text.}
 \item{\code{ffd}}{First Fixation Duration (ms) – duration of the first
 fixation on the word during the first pass.}
@@ -48,7 +48,7 @@ fixations before computing the measures.
 \examples{
 # Minimal example with three words and five fixations
 fixations <- dplyr::tibble(
-  word_nr    = c(1L, 2L, 3L, 2L, 3L),
+  word_id    = c(1L, 2L, 3L, 2L, 3L),
   duration   = c(200L, 150L, 180L, 120L, 90L),
   too_short  = FALSE,
   too_long   = FALSE,
@@ -56,9 +56,9 @@ fixations <- dplyr::tibble(
   near_blink = FALSE
 )
 words <- dplyr::tibble(
-  word_nr               = 1:3,
+  word_id               = 1:3,
   word                  = c("The", "quick", "fox"),
-  word_right_x_boundary = c(200L, 360L, 500L)
+  x_end                 = c(200L, 360L, 500L)
 )
 calculate_fixation_time_measures(fixations, words)
 }

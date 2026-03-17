@@ -34,26 +34,29 @@ remotes::install_github("bernhardangele/fixated")
 
 ## Quick start
 
+The following example shows how to read an EyeLink ASC file, compute reading measures, and launch an interactive visualisation.
+
 ```r
 library(fixated)
 
 # 1. Read an EyeLink ASC file
-asc <- read_asc("path/to/recording.asc")
-samples <- asc$samples
-events  <- asc$events
+# result is a list containing samples, events, word_boundaries, and trial_db
+asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+result <- read_asc(asc_file)
 
-# 2. (Optional) detect fixations from raw samples
-fixations <- detect_fixations(samples, min_duration = 100, max_dispersion = 25)
+# 2. Extract fixations and word ROIs
+fixations <- result$events[result$events$type == "FIXATION", ]
+roi       <- result$word_boundaries
 
-# 3. Clean fixations: remove outliers and merge split fixations
-fixations <- clean_fixations(fixations, min_duration = 80, merge_distance = 40)
-
-# 4. Load word regions of interest
-roi <- read_roi("path/to/roi.csv")
-
-# 5. Compute per-word eye-movement measures
-measures <- compute_eye_measures(fixations, roi)
+# 3. Compute per-word eye-movement measures (FFD, GD, GPT, TVT)
+measures <- compute_eye_measures(fixations, roi, trial_db = result$trial_db)
 head(measures)
+
+# 4. Launch interactive Shiny visualisation
+# Browsing trials with gaze overlays and word boundaries
+if (interactive()) {
+  plot_trials_shiny(result)
+}
 ```
 
 ## Input file formats

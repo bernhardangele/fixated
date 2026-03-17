@@ -8,7 +8,7 @@ detect_fixations(
   samples,
   min_duration = 100,
   max_dispersion = 25,
-  trial_col = "trial",
+  trial_col = "trial_nr",
   eye_col = "eye",
   method = c("idt", "saccades")
 )
@@ -30,7 +30,7 @@ x-range and y-range.  Only used when \code{method = "idt"}.  Defaults to \code{2
 
 \item{trial_col}{Character scalar or \code{NULL}.  Name of the column that
 identifies trials.  When supplied, fixation detection is run separately
-within each trial.  Defaults to \code{"trial"}.}
+within each trial.  Defaults to \code{"trial_nr"}.}
 
 \item{eye_col}{Character scalar or \code{NULL}.  Name of the column that
 identifies which eye each sample belongs to.  When supplied, fixation

@@ -6,8 +6,8 @@
 \usage{
 read_roi(
   path,
-  col_map = c(trial = "trial", word_id = "word_id", word = "word", x_start = "x_start",
-    x_end = "x_end", y_start = "y_start", y_end = "y_end"),
+  col_map = c(trial_nr = "trial_nr", word_id = "word_id", word = "word", x_start =
+    "x_start", x_end = "x_end", y_start = "y_start", y_end = "y_end"),
   ...
 )
 }
@@ -17,7 +17,7 @@ read_roi(
 \item{col_map}{Named character vector mapping canonical column names to the
 actual column names present in the CSV.  Canonical names and defaults:
 \itemize{
-\item \code{"trial"} → \code{"trial"} – trial/sentence identifier (\strong{required}).
+\item \code{"trial_nr"} → \code{"trial_nr"} – trial/sentence identifier (\strong{required}).
 \item \code{"word_id"} → \code{"word_id"} – word index within trial (\strong{required}).
 \item \code{"word"} → \code{"word"} – word text string (optional).
 \item \code{"x_start"} → \code{"x_start"} – left edge of ROI in pixels (\strong{required}).
@@ -29,9 +29,9 @@ actual column names present in the CSV.  Canonical names and defaults:
 \item{...}{Additional arguments forwarded to \code{\link[readr:read_delim]{readr::read_csv()}}.}
 }
 \value{
-A \link[tibble:tibble]{tibble} with columns \code{trial}, \code{word_id},
+A \link[tibble:tibble]{tibble} with columns \code{trial_nr}, \code{word_id},
 \code{x_start}, \code{x_end}, \code{y_start}, \code{y_end}, and (if present) \code{word}, all
-with canonical names.  Sorted by \code{trial}, then \code{word_id}.
+with canonical names.  Sorted by \code{trial_nr}, then \code{word_id}.
 }
 \description{
 Reads a CSV file that describes the rectangular regions of interest (ROIs)

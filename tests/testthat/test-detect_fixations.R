@@ -82,3 +82,21 @@ test_that("detect_fixations n_samples is positive for all fixations", {
     expect_true(all(result$n_samples > 0L))
   }
 })
+
+test_that("detect_fixations handles NA in trial_nr and issues a warning", {
+  set.seed(42)
+  samples <- dplyr::tibble(
+    trial_nr = c(rep(1L, 30), rep(NA_integer_, 30)),
+    time  = seq(0L, 590L, 10L),
+    x     = rep(300, 60) + stats::rnorm(60, 0, 1),
+    y     = rep(400, 60) + stats::rnorm(60, 0, 1)
+  )
+  
+  expect_warning(
+    result <- detect_fixations(samples, trial_col = "trial_nr"),
+    "There are NA values in the 'trial_nr' column"
+  )
+  
+  expect_true(any(is.na(result$trial_nr)))
+  expect_true(any(result$trial_nr == 1L, na.rm = TRUE))
+})

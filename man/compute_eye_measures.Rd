@@ -7,9 +7,10 @@
 compute_eye_measures(
   fixations,
   roi,
-  trial_col = "trial",
+  trial_col = "trial_nr",
   eye_col = "eye",
-  include_word_col = TRUE
+  include_word_col = TRUE,
+  trial_db = NULL
 )
 }
 \arguments{
@@ -23,7 +24,7 @@ contain columns \code{trial}, \code{word_id}, \code{x_start}, \code{x_end}, \cod
 \code{y_end}.}
 
 \item{trial_col}{Character scalar.  Name of the trial identifier column in
-both \code{fixations} and \code{roi}.  Defaults to \code{"trial"}.}
+both \code{fixations} and \code{roi}.  Defaults to \code{"trial_nr"}.}
 
 \item{eye_col}{Character scalar or \code{NULL}.  Name of the eye column in
 \code{fixations}, if any.  Measures are computed separately per eye when
@@ -31,6 +32,14 @@ provided.  Defaults to \code{"eye"}.}
 
 \item{include_word_col}{Logical.  If \code{TRUE} and the \code{roi} data frame
 contains a \code{word} column, attach it to the output.  Defaults to \code{TRUE}.}
+
+\item{trial_db}{A data frame (e.g. the \code{trial_db} element returned by
+\code{\link[=read_asc]{read_asc()}}) with columns named by \code{trial_col}, \code{t_display_on}, and
+\code{t_display_off}.  When supplied, only fixations whose \code{start_time} is
+\strong{strictly after} \code{t_display_on} \strong{and} whose \code{end_time} is \strong{strictly
+before} \code{t_display_off} are retained for each trial.  \code{NA} values in
+\code{t_display_on} or \code{t_display_off} disable the respective bound for that
+trial.  Defaults to \code{NULL} (no filtering).}
 }
 \value{
 A \link[tibble:tibble]{tibble} with one row per trial × word

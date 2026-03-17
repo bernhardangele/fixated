@@ -12,14 +12,14 @@ clean_fixations(
   y_bounds = c(-Inf, Inf),
   merge_distance = 40,
   merge_max_gap = 75,
-  trial_col = "trial",
+  trial_col = "trial_nr",
   eye_col = "eye"
 )
 }
 \arguments{
 \item{fixations}{A data frame of fixations with (at minimum) columns
 \code{start_time}, \code{end_time}, \code{duration}, \code{avg_x}, and \code{avg_y}.  May also
-contain \code{trial} and \code{eye} columns.}
+contain \code{trial_nr} and \code{eye} columns.}
 
 \item{min_duration}{Numeric scalar.  Fixations shorter than this value (ms)
 are removed \emph{before} merging.  Defaults to \code{80}.}
@@ -45,7 +45,7 @@ them to be candidates for merging.  Defaults to \code{75}.}
 
 \item{trial_col}{Character scalar or \code{NULL}.  Name of the column
 identifying trials.  Merging only occurs within trials.  Defaults to
-\code{"trial"}.}
+\code{"trial_nr"}.}
 
 \item{eye_col}{Character scalar or \code{NULL}.  Name of the column identifying
 the recorded eye.  Merging only occurs within the same eye.  Defaults to

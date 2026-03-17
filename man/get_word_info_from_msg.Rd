@@ -12,8 +12,8 @@ get_word_info_from_msg(trial_msg)
 }
 \value{
 A \link[tibble:tibble]{tibble} with columns \code{trial_nr} (integer),
-\code{sentence_nr} (integer), \code{word_nr} (integer), \code{word} (character), and
-\code{word_right_x_boundary} (integer pixel coordinate of the word's right
+\code{sentence_nr} (integer), \code{word_id} (integer), \code{word} (character), and
+\code{x_end} (integer pixel coordinate of the word's right
 edge).  Returns an empty tibble when no matching lines are found.
 }
 \description{

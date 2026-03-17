@@ -12,7 +12,7 @@ Description: Read raw samples and fixation/saccade events from CSV or ASC files
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.2
+RoxygenNote: 7.3.3
 Imports:
     dplyr (>= 1.1.0),
     readr (>= 2.1.0),

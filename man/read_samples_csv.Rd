@@ -6,7 +6,7 @@
 \usage{
 read_samples_csv(
   path,
-  col_map = c(time = "time", x = "x", y = "y", pupil = "pupil", eye = "eye", trial =
+  col_map = c(time = "time", x = "x", y = "y", pupil = "pupil", eye = "eye", trial_nr =
     "trial", participant = "participant"),
   eyes = c("L", "R"),
   ...
@@ -23,11 +23,11 @@ actual column names present in the CSV.  The canonical names are:
 \item \code{"y"} – vertical gaze position (numeric, pixels).
 \item \code{"pupil"} – pupil size (numeric; optional, pass \code{NA} to omit).
 \item \code{"eye"} – which eye (\code{"L"} or \code{"R"}; optional, pass \code{NA} to omit).
-\item \code{"trial"} – trial identifier (optional, pass \code{NA} to omit).
+\item \code{"trial_nr"} – trial identifier (optional, pass \code{NA} to omit).
 \item \code{"participant"} – participant identifier (optional, pass \code{NA} to omit).
 }
 
-Defaults to \code{c(time = "time", x = "x", y = "y", pupil = "pupil", eye = "eye", trial = "trial", participant = "participant")}.}
+Defaults to \code{c(time = "time", x = "x", y = "y", pupil = "pupil", eye = "eye", trial_nr = "trial", participant = "participant")}.}
 
 \item{eyes}{Character vector.  Which eye values to retain.  Defaults to
 \code{c("L", "R")}.  Ignored if the \code{"eye"} mapping is \code{NA}.}
@@ -36,7 +36,7 @@ Defaults to \code{c(time = "time", x = "x", y = "y", pupil = "pupil", eye = "eye
 }
 \value{
 A \link[tibble:tibble]{tibble} with columns \code{time} (integer), \code{x}
-(double), \code{y} (double), and any of \code{pupil}, \code{eye}, \code{trial},
+(double), \code{y} (double), and any of \code{pupil}, \code{eye}, \code{trial_nr},
 \code{participant} that were present in the source file.
 }
 \description{

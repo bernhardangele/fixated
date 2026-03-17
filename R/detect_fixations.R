@@ -119,6 +119,10 @@ detect_fixations <- function(
     return(.idt_fixations(samples, min_duration, max_dispersion))
   }
 
+  if (any(is.na(samples[[trial_col]]))) {
+    warning("There are NA values in the '", trial_col, "' column. These samples will be processed but may be irrelevant for trial-based analysis.")
+  }
+
   # Split by group columns, run I-DT within each group, reassemble
   group_keys <- unique(samples[, group_cols, drop = FALSE])
   results    <- vector("list", nrow(group_keys))
@@ -126,7 +130,8 @@ detect_fixations <- function(
   for (i in seq_len(nrow(group_keys))) {
     mask <- rep(TRUE, nrow(samples))
     for (col in group_cols) {
-      mask <- mask & (samples[[col]] == group_keys[[col]][[i]])
+      # Use %in% to handle NA values correctly in the mask
+      mask <- mask & (samples[[col]] %in% group_keys[[col]][[i]])
     }
     subset_df <- samples[mask, , drop = FALSE]
     fix_df    <- .idt_fixations(subset_df, min_duration, max_dispersion)
@@ -266,12 +271,25 @@ detect_fixations <- function(
   for (i in seq_len(nrow(group_keys))) {
     mask <- rep(TRUE, nrow(samples))
     for (col in group_cols) {
-      mask <- mask & (samples[[col]] == group_keys[[col]][[i]])
+      # Use %in% to handle NA values correctly in the mask
+      mask <- mask & (samples[[col]] %in% group_keys[[col]][[i]])
     }
     sub_inp <- inp[mask, , drop = FALSE]
     if (nrow(sub_inp) == 0L) next
-    raw    <- saccades::detect.fixations(sub_inp)
-    fix_df <- .reshape_saccades_output(raw, min_duration)
+
+    # saccades::detect.fixations can fail if no saccades are detected or data is messy
+    res <- tryCatch({
+      saccades::detect.fixations(sub_inp)
+    }, error = function(e) {
+      warning("saccades::detect.fixations failed for a group (",
+              paste(paste0(group_cols, "=", group_keys[i, group_cols]), collapse = ", "),
+              "): ", e$message)
+      NULL
+    })
+
+    if (is.null(res)) next
+
+    fix_df <- .reshape_saccades_output(res, min_duration)
     for (col in group_cols) {
       fix_df[[col]] <- group_keys[[col]][[i]]
     }
