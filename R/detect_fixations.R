@@ -29,7 +29,7 @@
 #'   x-range and y-range.  Only used when `method = "idt"`.  Defaults to `25`.
 #' @param trial_col Character scalar or `NULL`.  Name of the column that
 #'   identifies trials.  When supplied, fixation detection is run separately
-#'   within each trial.  Defaults to `"trial"`.
+#'   within each trial.  Defaults to `"trial_nr"`.
 #' @param eye_col Character scalar or `NULL`.  Name of the column that
 #'   identifies which eye each sample belongs to.  When supplied, fixation
 #'   detection is run separately for each eye.  Defaults to `"eye"`.
@@ -72,11 +72,17 @@ detect_fixations <- function(
     samples,
     min_duration   = 100,
     max_dispersion = 25,
-    trial_col      = "trial",
+    trial_col      = "trial_nr",
     eye_col        = "eye",
     method         = c("idt", "saccades")
 ) {
-  stopifnot(is.data.frame(samples))
+  # Smart fallback for trial column if default is not found
+  if (identical(trial_col, "trial_nr") && !("trial_nr" %in% names(samples)) && "trial" %in% names(samples)) {
+    trial_col <- "trial"
+  } else if (identical(trial_col, "trial") && !("trial" %in% names(samples)) && "trial_nr" %in% names(samples)) {
+    trial_col <- "trial_nr"
+  }
+
   required_cols <- c("time", "x", "y")
   missing_cols  <- setdiff(required_cols, names(samples))
   if (length(missing_cols) > 0L) {
@@ -97,7 +103,11 @@ detect_fixations <- function(
   }
 
   group_cols <- character(0)
-  if (!is.null(trial_col) && trial_col %in% names(samples)) {
+  if (!is.null(trial_col)) {
+    if (!(trial_col %in% names(samples))) {
+      warning("No trial column '", trial_col, "' found in samples. Creating a dummy '", trial_col, "' column.")
+      samples[[trial_col]] <- 1L
+    }
     group_cols <- c(group_cols, trial_col)
   }
   if (!is.null(eye_col) && eye_col %in% names(samples)) {
@@ -105,6 +115,7 @@ detect_fixations <- function(
   }
 
   if (length(group_cols) == 0L) {
+    # This part should theoretically not be reached unless both trial_col and eye_col are NULL
     return(.idt_fixations(samples, min_duration, max_dispersion))
   }
 
@@ -230,15 +241,13 @@ detect_fixations <- function(
 #' to match the column layout of \code{.idt_fixations()}.
 #' @noRd
 .saccades_fixations <- function(samples, min_duration, trial_col, eye_col) {
-  # saccades::detect.fixations() expects a data frame with columns
-  # time, x, y (and optionally trial).  It returns a data frame with
-  # columns x, y, start, end, dur, and optionally trial.
+  # Map columns to what saccades::detect.fixations expects: time, x, y, trial
   inp <- samples[, c("time", "x", "y"), drop = FALSE]
+  inp[["trial"]] <- samples[[trial_col]]
 
   group_cols <- character(0)
   if (!is.null(trial_col) && trial_col %in% names(samples)) {
-    inp[[trial_col]] <- samples[[trial_col]]
-    group_cols       <- c(group_cols, trial_col)
+    group_cols <- c(group_cols, trial_col)
   }
   if (!is.null(eye_col) && eye_col %in% names(samples)) {
     group_cols <- c(group_cols, eye_col)

@@ -13,7 +13,7 @@
 #' @param path Character scalar.  Path to the CSV file.
 #' @param col_map Named character vector mapping canonical column names to the
 #'   actual column names present in the CSV.  Canonical names and defaults:
-#'   * `"trial"` → `"trial"` – trial/sentence identifier (**required**).
+#'   * `"trial_nr"` → `"trial_nr"` – trial/sentence identifier (**required**).
 #'   * `"word_id"` → `"word_id"` – word index within trial (**required**).
 #'   * `"word"` → `"word"` – word text string (optional).
 #'   * `"x_start"` → `"x_start"` – left edge of ROI in pixels (**required**).
@@ -22,9 +22,9 @@
 #'   * `"y_end"` → `"y_end"` – bottom edge of ROI in pixels (**required**).
 #' @param ... Additional arguments forwarded to [readr::read_csv()].
 #'
-#' @return A [tibble][tibble::tibble] with columns `trial`, `word_id`,
+#' @return A [tibble][tibble::tibble] with columns `trial_nr`, `word_id`,
 #'   `x_start`, `x_end`, `y_start`, `y_end`, and (if present) `word`, all
-#'   with canonical names.  Sorted by `trial`, then `word_id`.
+#'   with canonical names.  Sorted by `trial_nr`, then `word_id`.
 #'
 #' @importFrom readr read_csv
 #' @importFrom dplyr mutate arrange rename select tibble
@@ -41,13 +41,13 @@
 read_roi <- function(
     path,
     col_map = c(
-      trial   = "trial",
-      word_id = "word_id",
-      word    = "word",
-      x_start = "x_start",
-      x_end   = "x_end",
-      y_start = "y_start",
-      y_end   = "y_end"
+      trial_nr = "trial_nr",
+      word_id  = "word_id",
+      word     = "word",
+      x_start  = "x_start",
+      x_end    = "x_end",
+      y_start  = "y_start",
+      y_end    = "y_end"
     ),
     ...
 ) {
@@ -55,7 +55,12 @@ read_roi <- function(
 
   raw <- readr::read_csv(path, show_col_types = FALSE, ...)
 
-  required_canons <- c("trial", "word_id", "x_start", "x_end", "y_start", "y_end")
+  # Smart fallback for trial_nr if default is not found in CSV
+  if (identical(col_map[["trial_nr"]], "trial_nr") && !("trial_nr" %in% names(raw)) && "trial" %in% names(raw)) {
+    col_map[["trial_nr"]] <- "trial"
+  }
+
+  required_canons <- c("trial_nr", "word_id", "x_start", "x_end", "y_start", "y_end")
   for (canon in required_canons) {
     csv_col <- col_map[[canon]]
     if (is.na(csv_col) || !(csv_col %in% names(raw))) {
@@ -94,5 +99,5 @@ read_roi <- function(
     y_end   = as.numeric(.data$y_end)
   )
 
-  dplyr::arrange(raw, .data$trial, .data$word_id)
+  dplyr::arrange(raw, .data$trial_nr, .data$word_id)
 }

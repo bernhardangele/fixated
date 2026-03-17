@@ -147,6 +147,63 @@ read_asc <- function(path,
     }
   }
 
+  # ---- post-process word boundaries with trial_db metadata -----------------
+  if (!is.null(word_boundaries) && !is.null(trial_db)) {
+    # Combine with trial_db to get sentence_start_x and height
+    # Note: trial_db and word_boundaries both use trial_nr
+    wb_processed <- list()
+    unique_trials <- unique(word_boundaries$trial_nr)
+
+    for (tr in unique_trials) {
+      trial_wb <- word_boundaries[word_boundaries$trial_nr == tr, ]
+      trial_info <- trial_db[trial_db$trial_nr == tr, ]
+
+      if (nrow(trial_info) == 0L) {
+        wb_processed[[as.character(tr)]] <- trial_wb
+        next
+      }
+
+      # Get x_start from trial_db or default
+      s_start_x <- if ("sentence_start_x" %in% names(trial_info)) {
+        trial_info$sentence_start_x[[1L]]
+      } else {
+        warning("Column 'sentence_start_x' not found in trial_db for trial ", tr, ". Defaulting to 125.")
+        125
+      }
+
+      # Get height from trial_db or default
+      s_height <- if ("height" %in% names(trial_info)) {
+        as.numeric(trial_info$height[[1L]])
+      } else {
+        warning("Column 'height' not found in trial_db for trial ", tr, ". Defaulting to 1080.")
+        1080
+      }
+
+      # Compute x_start, y_start, y_end
+      trial_wb <- trial_wb[order(trial_wb$word_id), ]
+      n_w <- nrow(trial_wb)
+      x_starts <- numeric(n_w)
+      x_starts[1L] <- as.numeric(s_start_x)
+      if (n_w > 1L) {
+        x_starts[2:n_w] <- as.numeric(trial_wb$x_end[1:(n_w - 1L)])
+      }
+
+      trial_wb$x_start <- x_starts
+      trial_wb$y_start <- 0
+      trial_wb$y_end   <- s_height
+
+      wb_processed[[as.character(tr)]] <- trial_wb
+    }
+
+    word_boundaries <- dplyr::bind_rows(wb_processed)
+
+    # Final column ordering to match read_roi
+    desired_cols <- c("trial_nr", "word_id", "word", "x_start", "x_end", "y_start", "y_end")
+    existing_cols <- names(word_boundaries)
+    col_order <- c(intersect(desired_cols, existing_cols), setdiff(existing_cols, desired_cols))
+    word_boundaries <- word_boundaries[, col_order]
+  }
+
   list(
     samples         = samples,
     events          = events,
@@ -421,10 +478,10 @@ read_asc <- function(path,
   m <- stringr::str_match(lines[wb_idx], pattern)
   dplyr::tibble(
     trial_nr        = as.integer(m[, 2L]),
-    item_nr         = as.integer(m[, 3L]),
-    word_nr         = as.integer(m[, 4L]),
+    sentence_nr     = as.integer(m[, 3L]),
+    word_id         = as.integer(m[, 4L]),
     word            = m[, 5L],
-    right_boundary  = as.integer(m[, 6L])
+    x_end           = as.integer(m[, 6L])
   )
 }
 

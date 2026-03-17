@@ -36,10 +36,10 @@ test_that("read_asc parses word_boundaries from binocular file", {
   result <- read_asc(asc_file)
   wb <- result$word_boundaries
   expect_true(!is.null(wb))
-  expect_true(all(c("trial_nr", "item_nr", "word_nr", "word",
-                    "right_boundary") %in% names(wb)))
+  expect_true(all(c("trial_nr", "sentence_nr", "word_id", "word",
+                    "x_end") %in% names(wb)))
   expect_true(nrow(wb) > 0L)
-  expect_equal(wb$word_nr[[1L]], 1L)
+  expect_equal(wb$word_id[[1L]], 1L)
 })
 
 test_that("read_asc parses calibration from binocular file", {
@@ -157,8 +157,8 @@ test_that("get_word_info_from_msg returns expected columns", {
     "MSG\t100 TRIAL 0 ITEM 5 WORD 2 quick RIGHT_BOUNDARY 310"
   )
   result <- get_word_info_from_msg(msgs)
-  expect_true(all(c("trial_nr", "sentence_nr", "word_nr", "word",
-                    "word_right_x_boundary") %in% names(result)))
+  expect_true(all(c("trial_nr", "sentence_nr", "word_id", "word",
+                    "x_end") %in% names(result)))
   expect_equal(nrow(result), 2L)
 })
 
@@ -166,7 +166,7 @@ test_that("get_word_info_from_msg parses word text and boundary correctly", {
   msgs <- c("MSG\t100 TRIAL 0 ITEM 5 WORD 1 The RIGHT_BOUNDARY 180")
   result <- get_word_info_from_msg(msgs)
   expect_equal(result$word[[1L]], "The")
-  expect_equal(result$word_right_x_boundary[[1L]], 180L)
+  expect_equal(result$x_end[[1L]], 180L)
 })
 
 test_that("get_word_info_from_msg returns empty tibble for non-matching input", {
@@ -207,7 +207,7 @@ test_that("get_trial_info_from_msg errors on multiple matches when not allowed",
 
 make_simple_fixations <- function() {
   dplyr::tibble(
-    word_nr    = c(1L, 2L, 3L, 2L),
+    word_id    = c(1L, 2L, 3L, 2L),
     duration   = c(200L, 150L, 180L, 120L),
     too_short  = FALSE,
     too_long   = FALSE,
@@ -218,9 +218,9 @@ make_simple_fixations <- function() {
 
 make_simple_words <- function() {
   dplyr::tibble(
-    word_nr               = 1:3,
+    word_id               = 1:3,
     word                  = c("The", "quick", "fox"),
-    word_right_x_boundary = c(200L, 360L, 500L)
+    x_end                 = c(200L, 360L, 500L)
   )
 }
 
@@ -228,7 +228,7 @@ test_that("calculate_fixation_time_measures returns expected columns", {
   result <- calculate_fixation_time_measures(
     make_simple_fixations(), make_simple_words()
   )
-  expected <- c("word_nr", "word", "ffd", "gd", "sfd", "gopast", "tvt")
+  expected <- c("word_id", "word", "ffd", "gd", "sfd", "gopast", "tvt")
   expect_true(all(expected %in% names(result)))
 })
 
@@ -236,7 +236,7 @@ test_that("calculate_fixation_time_measures FFD is first-pass first duration", {
   result <- calculate_fixation_time_measures(
     make_simple_fixations(), make_simple_words()
   )
-  w2 <- result[result$word_nr == 2L, ]
+  w2 <- result[result$word_id == 2L, ]
   expect_equal(w2$ffd, 150L)
 })
 
@@ -244,7 +244,7 @@ test_that("calculate_fixation_time_measures TVT sums all durations on word", {
   result <- calculate_fixation_time_measures(
     make_simple_fixations(), make_simple_words()
   )
-  w2 <- result[result$word_nr == 2L, ]
+  w2 <- result[result$word_id == 2L, ]
   # Word 2 fixated at duration 150 (first pass) + 120 (regression) = 270
   expect_equal(w2$tvt, 270L)
 })
@@ -258,7 +258,7 @@ test_that("calculate_fixation_time_measures has one row per word", {
 
 test_that("calculate_fixation_time_measures SFD equals FFD when single fixation", {
   fixations <- dplyr::tibble(
-    word_nr    = c(1L, 2L, 3L),
+    word_id    = c(1L, 2L, 3L),
     duration   = c(200L, 150L, 180L),
     too_short  = FALSE,
     too_long   = FALSE,
@@ -266,7 +266,7 @@ test_that("calculate_fixation_time_measures SFD equals FFD when single fixation"
     near_blink = FALSE
   )
   result <- calculate_fixation_time_measures(fixations, make_simple_words())
-  w1 <- result[result$word_nr == 1L, ]
+  w1 <- result[result$word_id == 1L, ]
   expect_equal(w1$sfd, w1$ffd)
 })
 
@@ -310,43 +310,43 @@ test_that("merge_fixations errors on missing required columns", {
 # assign_word_info()
 # ---------------------------------------------------------------------------
 
-test_that("assign_word_info adds word_nr and word columns", {
+test_that("assign_word_info adds word_id and word columns", {
   fixations <- dplyr::tibble(x = c(160, 300), y = c(540, 540))
   wb <- dplyr::tibble(
-    word_nr               = 1:3,
+    word_id               = 1:3,
     word                  = c("The", "quick", "fox"),
-    word_right_x_boundary = c(200L, 360L, 500L),
+    x_end                 = c(200L, 360L, 500L),
     sentence_nr           = 1L,
     trial_nr              = 1L
   )
   result <- assign_word_info(fixations, wb)
-  expect_true(all(c("word_nr", "word") %in% names(result)))
-  expect_equal(result$word_nr[[1L]], 1L)
+  expect_true(all(c("word_id", "word") %in% names(result)))
+  expect_equal(result$word_id[[1L]], 1L)
   expect_equal(result$word[[1L]], "The")
 })
 
 test_that("assign_word_info assigns -1 for pre-sentence fixations", {
   fixations <- dplyr::tibble(x = 50, y = 540)
   wb <- dplyr::tibble(
-    word_nr               = 1:2,
+    word_id               = 1:2,
     word                  = c("The", "fox"),
-    word_right_x_boundary = c(200L, 360L),
+    x_end                 = c(200L, 360L),
     sentence_nr           = 1L,
     trial_nr              = 1L
   )
   result <- assign_word_info(fixations, wb, sentence_left_x_boundary = 125)
-  expect_equal(result$word_nr[[1L]], -1L)
+  expect_equal(result$word_id[[1L]], -1L)
 })
 
 test_that("assign_word_info assigns -99 for post-sentence fixations", {
   fixations <- dplyr::tibble(x = 2000, y = 540)
   wb <- dplyr::tibble(
-    word_nr               = 1:2,
+    word_id               = 1:2,
     word                  = c("The", "fox"),
-    word_right_x_boundary = c(200L, 360L),
+    x_end                 = c(200L, 360L),
     sentence_nr           = 1L,
     trial_nr              = 1L
   )
   result <- assign_word_info(fixations, wb)
-  expect_equal(result$word_nr[[1L]], -99L)
+  expect_equal(result$word_id[[1L]], -99L)
 })

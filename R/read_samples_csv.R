@@ -18,17 +18,17 @@
 #'   * `"y"` – vertical gaze position (numeric, pixels).
 #'   * `"pupil"` – pupil size (numeric; optional, pass `NA` to omit).
 #'   * `"eye"` – which eye (`"L"` or `"R"`; optional, pass `NA` to omit).
-#'   * `"trial"` – trial identifier (optional, pass `NA` to omit).
+#'   * `"trial_nr"` – trial identifier (optional, pass `NA` to omit).
 #'   * `"participant"` – participant identifier (optional, pass `NA` to omit).
 #'
 #'   Defaults to `c(time = "time", x = "x", y = "y", pupil = "pupil",
-#'   eye = "eye", trial = "trial", participant = "participant")`.
+#'   eye = "eye", trial_nr = "trial", participant = "participant")`.
 #' @param eyes Character vector.  Which eye values to retain.  Defaults to
 #'   `c("L", "R")`.  Ignored if the `"eye"` mapping is `NA`.
 #' @param ... Additional arguments forwarded to [readr::read_csv()].
 #'
 #' @return A [tibble][tibble::tibble] with columns `time` (integer), `x`
-#'   (double), `y` (double), and any of `pupil`, `eye`, `trial`,
+#'   (double), `y` (double), and any of `pupil`, `eye`, `trial_nr`,
 #'   `participant` that were present in the source file.
 #'
 #' @importFrom readr read_csv col_double col_integer col_character cols
@@ -51,7 +51,7 @@ read_samples_csv <- function(
       y           = "y",
       pupil       = "pupil",
       eye         = "eye",
-      trial       = "trial",
+      trial_nr    = "trial",
       participant = "participant"
     ),
     eyes = c("L", "R"),

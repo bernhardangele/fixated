@@ -7,7 +7,7 @@ test_that("detect_fixations returns a tibble with required columns", {
   result <- detect_fixations(samples, min_duration = 100, max_dispersion = 25)
 
   expect_s3_class(result, "tbl_df")
-  expected_cols <- c("start_time", "end_time", "duration", "avg_x", "avg_y", "n_samples")
+  expected_cols <- c("trial_nr", "start_time", "end_time", "duration", "avg_x", "avg_y", "n_samples")
   expect_true(all(expected_cols %in% names(result)))
 })
 
@@ -58,15 +58,15 @@ test_that("detect_fixations durations are non-negative", {
 test_that("detect_fixations respects trial_col grouping", {
   set.seed(7)
   samples <- dplyr::tibble(
-    trial = c(rep(1L, 50), rep(2L, 50)),
+    trial_nr = c(rep(1L, 50), rep(2L, 50)),
     time  = c(seq(0L, 490L, 10L), seq(0L, 490L, 10L)),
     x     = rep(300, 100) + stats::rnorm(100, 0, 2),
     y     = rep(400, 100) + stats::rnorm(100, 0, 2)
   )
-  result <- detect_fixations(samples, min_duration = 100, trial_col = "trial")
+  result <- detect_fixations(samples, min_duration = 100, trial_col = "trial_nr")
 
-  expect_true("trial" %in% names(result))
-  expect_true(all(unique(result$trial) %in% c(1L, 2L)))
+  expect_true("trial_nr" %in% names(result))
+  expect_true(all(unique(result$trial_nr) %in% c(1L, 2L)))
 })
 
 test_that("detect_fixations n_samples is positive for all fixations", {

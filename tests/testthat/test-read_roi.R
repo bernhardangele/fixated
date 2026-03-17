@@ -3,7 +3,7 @@ test_that("read_roi returns a tibble with required columns", {
   result <- read_roi(roi_file)
 
   expect_s3_class(result, "tbl_df")
-  expected_cols <- c("trial", "word_id", "x_start", "x_end", "y_start", "y_end")
+  expected_cols <- c("trial_nr", "word_id", "x_start", "x_end", "y_start", "y_end")
   expect_true(all(expected_cols %in% names(result)))
 })
 
@@ -25,7 +25,7 @@ test_that("read_roi sorts by trial then word_id", {
   roi_file <- system.file("extdata", "example_roi.csv", package = "fixated")
   result <- read_roi(roi_file)
 
-  expect_equal(result, dplyr::arrange(result, .data$trial, .data$word_id))
+  expect_equal(result, dplyr::arrange(result, .data$trial_nr, .data$word_id))
 })
 
 test_that("read_roi supports col_map renaming", {
@@ -40,7 +40,7 @@ test_that("read_roi supports col_map renaming", {
   result <- read_roi(
     tmp,
     col_map = c(
-      trial   = "sent",
+      trial_nr = "sent",
       word_id = "pos",
       word    = "text",
       x_start = "left",
@@ -49,7 +49,7 @@ test_that("read_roi supports col_map renaming", {
       y_end   = "bottom"
     )
   )
-  expect_true(all(c("trial", "word_id", "word", "x_start", "x_end", "y_start", "y_end") %in% names(result)))
+  expect_true(all(c("trial_nr", "word_id", "word", "x_start", "x_end", "y_start", "y_end") %in% names(result)))
   expect_equal(nrow(result), 2L)
 })
 

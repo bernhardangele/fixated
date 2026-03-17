@@ -1,7 +1,7 @@
 ## Helper: minimal fixation + ROI data for testing
 make_test_roi <- function() {
   dplyr::tibble(
-    trial   = 1L,
+    trial_nr = 1L,
     word_id = 1:3,
     word    = c("The", "quick", "fox"),
     x_start = c(100, 200, 320),
@@ -13,7 +13,7 @@ make_test_roi <- function() {
 
 make_test_fixations <- function() {
   dplyr::tibble(
-    trial      = 1L,
+    trial_nr   = 1L,
     start_time = c(0L,   200L,  400L,  600L),
     end_time   = c(150L, 380L,  550L,  750L),
     duration   = c(150L, 180L,  150L,  150L),
@@ -29,7 +29,7 @@ test_that("compute_eye_measures returns a tibble", {
 
 test_that("compute_eye_measures has required output columns", {
   result <- compute_eye_measures(make_test_fixations(), make_test_roi())
-  expected <- c("trial", "word_id", "ffd", "gd", "gpt", "tvt", "n_fixations")
+  expected <- c("trial_nr", "word_id", "ffd", "gd", "gpt", "tvt", "n_fixations")
   expect_true(all(expected %in% names(result)))
 })
 
@@ -85,7 +85,7 @@ test_that("compute_eye_measures includes word column when available", {
 test_that("compute_eye_measures handles re-reading (TVT > GD)", {
   # Fixation sequence: word1, word2, word1 (regression), word2
   fixations <- dplyr::tibble(
-    trial      = 1L,
+    trial_nr   = 1L,
     start_time = c(0L,   200L,  400L,  600L),
     end_time   = c(150L, 350L,  500L,  700L),
     duration   = c(150L, 150L,  100L,  100L),
@@ -107,7 +107,7 @@ test_that("compute_eye_measures handles re-reading (TVT > GD)", {
 test_that("compute_eye_measures n_fixations is correct", {
   # One fixation per word
   fixations <- dplyr::tibble(
-    trial      = 1L,
+    trial_nr   = 1L,
     start_time = c(0L,   200L),
     end_time   = c(150L, 350L),
     duration   = c(150L, 150L),
@@ -124,14 +124,14 @@ test_that("compute_eye_measures errors on missing fixation columns", {
 })
 
 test_that("compute_eye_measures errors on missing ROI columns", {
-  roi <- dplyr::tibble(trial = 1L, word_id = 1L)
+  roi <- dplyr::tibble(trial_nr = 1L, word_id = 1L)
   expect_error(compute_eye_measures(make_test_fixations(), roi), "missing columns")
 })
 
 test_that("compute_eye_measures FFD is NA when word was skipped", {
   # Fixation goes directly to word 3, skipping words 1 and 2
   fixations <- dplyr::tibble(
-    trial      = 1L,
+    trial_nr   = 1L,
     start_time = c(0L),
     end_time   = c(150L),
     duration   = c(150L),

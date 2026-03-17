@@ -13,7 +13,7 @@
 #'
 #' @param fixations A data frame of fixations with (at minimum) columns
 #'   `start_time`, `end_time`, `duration`, `avg_x`, and `avg_y`.  May also
-#'   contain `trial` and `eye` columns.
+#'   contain `trial_nr` and `eye` columns.
 #' @param min_duration Numeric scalar.  Fixations shorter than this value (ms)
 #'   are removed *before* merging.  Defaults to `80`.
 #' @param max_duration Numeric scalar.  Fixations longer than this value (ms)
@@ -32,7 +32,7 @@
 #'   them to be candidates for merging.  Defaults to `75`.
 #' @param trial_col Character scalar or `NULL`.  Name of the column
 #'   identifying trials.  Merging only occurs within trials.  Defaults to
-#'   `"trial"`.
+#'   `"trial_nr"`.
 #' @param eye_col Character scalar or `NULL`.  Name of the column identifying
 #'   the recorded eye.  Merging only occurs within the same eye.  Defaults to
 #'   `"eye"`.
@@ -66,7 +66,7 @@ clean_fixations <- function(
     y_bounds        = c(-Inf, Inf),
     merge_distance  = 40,
     merge_max_gap   = 75,
-    trial_col       = "trial",
+    trial_col       = "trial_nr",
     eye_col         = "eye"
 ) {
   stopifnot(is.data.frame(fixations))
@@ -76,6 +76,13 @@ clean_fixations <- function(
     stop("fixations is missing required columns: ", paste(missing_cols, collapse = ", "))
   }
   stopifnot(length(x_bounds) == 2L, length(y_bounds) == 2L)
+
+  # Smart fallback for trial column if default is not found
+  if (identical(trial_col, "trial_nr") && !("trial_nr" %in% names(fixations)) && "trial" %in% names(fixations)) {
+    trial_col <- "trial"
+  } else if (identical(trial_col, "trial") && !("trial" %in% names(fixations)) && "trial_nr" %in% names(fixations)) {
+    trial_col <- "trial_nr"
+  }
 
   group_cols <- character(0)
   if (!is.null(trial_col) && trial_col %in% names(fixations)) {
@@ -134,31 +141,33 @@ clean_fixations <- function(
   current     <- as.list(fix[1L, , drop = FALSE])
   current$duration <- as.integer(current$end_time - current$start_time)
 
-  for (i in seq(2L, n)) {
-    candidate <- as.list(fix[i, , drop = FALSE])
-    gap       <- as.numeric(candidate$start_time) - as.numeric(current$end_time)
-    dist      <- sqrt(
-      (candidate$avg_x - current$avg_x)^2 +
-        (candidate$avg_y - current$avg_y)^2
-    )
+  if (n > 1L) {
+    for (i in seq(2L, n)) {
+      candidate <- as.list(fix[i, , drop = FALSE])
+      gap       <- as.numeric(candidate$start_time) - as.numeric(current$end_time)
+      dist      <- sqrt(
+        (candidate$avg_x - current$avg_x)^2 +
+          (candidate$avg_y - current$avg_y)^2
+      )
 
-    if (gap <= merge_max_gap && dist <= merge_distance) {
-      # Merge: weighted mean position, extend time span
-      dur_cur  <- as.numeric(current$duration)
-      dur_cand <- as.numeric(candidate$end_time - candidate$start_time)
-      total    <- dur_cur + dur_cand
-      current$avg_x    <- (current$avg_x    * dur_cur + candidate$avg_x    * dur_cand) / total
-      current$avg_y    <- (current$avg_y    * dur_cur + candidate$avg_y    * dur_cand) / total
-      current$end_time <- candidate$end_time
-      current$duration <- as.integer(current$end_time - current$start_time)
-      # Accumulate n_samples if present
-      if (!is.null(current$n_samples) && !is.null(candidate$n_samples)) {
-        current$n_samples <- as.integer(current$n_samples + candidate$n_samples)
+      if (gap <= merge_max_gap && dist <= merge_distance) {
+        # Merge: weighted mean position, extend time span
+        dur_cur  <- as.numeric(current$duration)
+        dur_cand <- as.numeric(candidate$end_time - candidate$start_time)
+        total    <- dur_cur + dur_cand
+        current$avg_x    <- (current$avg_x    * dur_cur + candidate$avg_x    * dur_cand) / total
+        current$avg_y    <- (current$avg_y    * dur_cur + candidate$avg_y    * dur_cand) / total
+        current$end_time <- candidate$end_time
+        current$duration <- as.integer(current$end_time - current$start_time)
+        # Accumulate n_samples if present
+        if (!is.null(current$n_samples) && !is.null(candidate$n_samples)) {
+          current$n_samples <- as.integer(current$n_samples + candidate$n_samples)
+        }
+      } else {
+        merged_list[[length(merged_list) + 1L]] <- current
+        current <- candidate
+        current$duration <- as.integer(current$end_time - current$start_time)
       }
-    } else {
-      merged_list[[length(merged_list) + 1L]] <- current
-      current <- candidate
-      current$duration <- as.integer(current$end_time - current$start_time)
     }
   }
   merged_list[[length(merged_list) + 1L]] <- current

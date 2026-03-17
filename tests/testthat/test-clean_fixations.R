@@ -20,7 +20,7 @@ test_that("clean_fixations removes long fixations", {
     avg_x      = c(300,  450,  600),
     avg_y      = c(400,  400,  400)
   )
-  result <- clean_fixations(fixations, min_duration = 80, max_duration = 1200, merge_distance = 1000)
+  result <- clean_fixations(fixations, min_duration = 80, max_duration = 1200, merge_distance = 0)
 
   expect_equal(nrow(result), 2L)
   expect_true(all(result$duration <= 1200L))

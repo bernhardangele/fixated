@@ -24,7 +24,7 @@
 #'   contain columns `trial`, `word_id`, `x_start`, `x_end`, `y_start`,
 #'   `y_end`.
 #' @param trial_col Character scalar.  Name of the trial identifier column in
-#'   both `fixations` and `roi`.  Defaults to `"trial"`.
+#'   both `fixations` and `roi`.  Defaults to `"trial_nr"`.
 #' @param eye_col Character scalar or `NULL`.  Name of the eye column in
 #'   `fixations`, if any.  Measures are computed separately per eye when
 #'   provided.  Defaults to `"eye"`.
@@ -78,14 +78,21 @@
 compute_eye_measures <- function(
     fixations,
     roi,
-    trial_col       = "trial",
+    trial_col       = "trial_nr",
     eye_col         = "eye",
     include_word_col = TRUE
 ) {
   stopifnot(is.data.frame(fixations), is.data.frame(roi))
 
+  # Smart fallback for trial column if default is not found
+  if (identical(trial_col, "trial_nr") && !("trial_nr" %in% names(fixations)) && "trial" %in% names(fixations)) {
+    trial_col <- "trial"
+  } else if (identical(trial_col, "trial") && !("trial" %in% names(fixations)) && "trial_nr" %in% names(fixations)) {
+    trial_col <- "trial_nr"
+  }
+
   required_fix <- c("start_time", "end_time", "duration", "avg_x", "avg_y")
-  required_roi <- c("trial", "word_id", "x_start", "x_end", "y_start", "y_end")
+  required_roi <- c(trial_col, "word_id", "x_start", "x_end", "y_start", "y_end")
 
   missing_fix <- setdiff(required_fix, names(fixations))
   missing_roi <- setdiff(required_roi, names(roi))
@@ -132,11 +139,7 @@ compute_eye_measures <- function(
 
   # Attach word text if requested
   if (include_word_col && "word" %in% names(roi)) {
-    word_lookup <- unique(roi[, c("trial", "word_id", "word"), drop = FALSE])
-    # Rename trial col if non-default
-    if (trial_col != "trial") {
-      names(word_lookup)[names(word_lookup) == "trial"] <- trial_col
-    }
+    word_lookup <- unique(roi[, c(trial_col, "word_id", "word"), drop = FALSE])
     join_by <- c(trial_col, "word_id")
     out <- dplyr::left_join(out, word_lookup, by = join_by)
   }

@@ -10,15 +10,15 @@
 #' fixations before computing the measures.
 #'
 #' @param fixations A data frame of fixations for a single trial.  Must
-#'   contain columns `word_nr`, `duration`, `too_short`, `too_long`,
+#'   contain columns `word_id`, `duration`, `too_short`, `too_long`,
 #'   `merged`, `near_blink`.
 #' @param words A data frame of word information for the trial (e.g., from
-#'   [get_word_info_from_msg()]).  Must contain columns `word_nr`, `word`,
-#'   and `word_right_x_boundary`.
+#'   [get_word_info_from_msg()]).  Must contain columns `word_id`, `word`,
+#'   and `x_end`.
 #'
 #' @return A data frame with one row per word and the following columns:
 #'   \describe{
-#'     \item{`word_nr`}{Word number.}
+#'     \item{`word_id`}{Word number.}
 #'     \item{`word`}{Word text.}
 #'     \item{`ffd`}{First Fixation Duration (ms) – duration of the first
 #'       fixation on the word during the first pass.}
@@ -41,7 +41,7 @@
 #' @examples
 #' # Minimal example with three words and five fixations
 #' fixations <- dplyr::tibble(
-#'   word_nr    = c(1L, 2L, 3L, 2L, 3L),
+#'   word_id    = c(1L, 2L, 3L, 2L, 3L),
 #'   duration   = c(200L, 150L, 180L, 120L, 90L),
 #'   too_short  = FALSE,
 #'   too_long   = FALSE,
@@ -49,14 +49,14 @@
 #'   near_blink = FALSE
 #' )
 #' words <- dplyr::tibble(
-#'   word_nr               = 1:3,
+#'   word_id               = 1:3,
 #'   word                  = c("The", "quick", "fox"),
-#'   word_right_x_boundary = c(200L, 360L, 500L)
+#'   x_end                 = c(200L, 360L, 500L)
 #' )
 #' calculate_fixation_time_measures(fixations, words)
 calculate_fixation_time_measures <- function(fixations, words) {
   stopifnot(is.data.frame(fixations), is.data.frame(words))
-  required_fix <- c("word_nr", "duration", "too_short", "too_long",
+  required_fix <- c("word_id", "duration", "too_short", "too_long",
                     "merged", "near_blink")
   missing_fix <- setdiff(required_fix, names(fixations))
   if (length(missing_fix) > 0L) {
@@ -74,14 +74,14 @@ calculate_fixation_time_measures <- function(fixations, words) {
       !(.data$duration < 100L & .data$near_blink)
     ) |>
     dplyr::mutate(
-      word_max   = cummax(.data$word_nr),
-      first_pass = categorize_fixation(.data$word_nr)
+      word_max   = cummax(.data$word_id),
+      first_pass = categorize_fixation(.data$word_id)
     )
 
   # First-pass measures (FFD, GD, SFD)
   first_pass_measures <- fixations_clean |>
     dplyr::filter(.data$first_pass != "other fixation") |>
-    dplyr::group_by(.data$word_nr) |>
+    dplyr::group_by(.data$word_id) |>
     dplyr::summarize(
       ffd = .data$duration[[1L]],
       gd  = sum(.data$duration),
@@ -96,12 +96,12 @@ calculate_fixation_time_measures <- function(fixations, words) {
 
   # Total viewing time (all passes)
   tvt_measures <- fixations_clean |>
-    dplyr::group_by(.data$word_nr) |>
+    dplyr::group_by(.data$word_id) |>
     dplyr::summarize(tvt = sum(.data$duration), .groups = "drop")
 
   words |>
-    dplyr::left_join(first_pass_measures, by = "word_nr") |>
-    dplyr::left_join(gopast_measures,     by = c("word_nr" = "word_max")) |>
-    dplyr::left_join(tvt_measures,        by = "word_nr") |>
-    dplyr::select(-"word_right_x_boundary")
+    dplyr::left_join(first_pass_measures, by = "word_id") |>
+    dplyr::left_join(gopast_measures,     by = c("word_id" = "word_max")) |>
+    dplyr::left_join(tvt_measures,        by = "word_id") |>
+    dplyr::select(-"x_end")
 }

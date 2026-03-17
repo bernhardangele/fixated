@@ -13,8 +13,8 @@
 #'   (one line per element).
 #'
 #' @return A [tibble][tibble::tibble] with columns `trial_nr` (integer),
-#'   `sentence_nr` (integer), `word_nr` (integer), `word` (character), and
-#'   `word_right_x_boundary` (integer pixel coordinate of the word's right
+#'   `sentence_nr` (integer), `word_id` (integer), `word` (character), and
+#'   `x_end` (integer pixel coordinate of the word's right
 #'   edge).  Returns an empty tibble when no matching lines are found.
 #'
 #' @importFrom dplyr tibble
@@ -38,20 +38,20 @@ get_word_info_from_msg <- function(trial_msg) {
 
   if (length(word_lines) == 0L) {
     return(dplyr::tibble(
-      trial_nr              = integer(0),
-      sentence_nr           = integer(0),
-      word_nr               = integer(0),
-      word                  = character(0),
-      word_right_x_boundary = integer(0)
+      trial_nr    = integer(0),
+      sentence_nr = integer(0),
+      word_id     = integer(0),
+      word        = character(0),
+      x_end       = integer(0)
     ))
   }
 
   m <- stringr::str_match(word_lines, pattern)
   dplyr::tibble(
-    trial_nr              = as.integer(m[, 2L]),
-    sentence_nr           = as.integer(m[, 3L]),
-    word_nr               = as.integer(m[, 4L]),
-    word                  = m[, 5L],
-    word_right_x_boundary = as.integer(m[, 6L])
+    trial_nr    = as.integer(m[, 2L]),
+    sentence_nr = as.integer(m[, 3L]),
+    word_id     = as.integer(m[, 4L]),
+    word        = m[, 5L],
+    x_end       = as.integer(m[, 6L])
   )
 }
