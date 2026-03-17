@@ -30,6 +30,13 @@
 #'   provided.  Defaults to `"eye"`.
 #' @param include_word_col Logical.  If `TRUE` and the `roi` data frame
 #'   contains a `word` column, attach it to the output.  Defaults to `TRUE`.
+#' @param trial_db A data frame (e.g. the `trial_db` element returned by
+#'   [read_asc()]) with columns named by `trial_col`, `t_display_on`, and
+#'   `t_display_off`.  When supplied, only fixations whose `start_time` is
+#'   **strictly after** `t_display_on` **and** whose `end_time` is **strictly
+#'   before** `t_display_off` are retained for each trial.  `NA` values in
+#'   `t_display_on` or `t_display_off` disable the respective bound for that
+#'   trial.  Defaults to `NULL` (no filtering).
 #'
 #' @return A [tibble][tibble::tibble] with one row per trial × word
 #'   combination that received at least one fixation.  Columns:
@@ -80,7 +87,8 @@ compute_eye_measures <- function(
     roi,
     trial_col       = "trial_nr",
     eye_col         = "eye",
-    include_word_col = TRUE
+    include_word_col = TRUE,
+    trial_db        = NULL
 ) {
   stopifnot(is.data.frame(fixations), is.data.frame(roi))
 
@@ -106,6 +114,16 @@ compute_eye_measures <- function(
   has_trial <- trial_col %in% names(fixations)
   has_eye   <- !is.null(eye_col) && eye_col %in% names(fixations)
 
+  # Validate trial_db if provided
+  if (!is.null(trial_db)) {
+    stopifnot(is.data.frame(trial_db))
+    required_tdb <- c(trial_col, "t_display_on", "t_display_off")
+    missing_tdb  <- setdiff(required_tdb, names(trial_db))
+    if (length(missing_tdb) > 0L) {
+      stop("trial_db is missing columns: ", paste(missing_tdb, collapse = ", "))
+    }
+  }
+
   # Assign fixations to ROIs
   fix_assigned <- .assign_fixations_to_roi(fixations, roi, trial_col)
 
@@ -127,6 +145,23 @@ compute_eye_measures <- function(
     }
     trial_fix <- fix_assigned[mask, , drop = FALSE]
     trial_fix <- trial_fix[order(trial_fix$start_time), , drop = FALSE]
+
+    # Filter to display-on / display-off window when trial_db is supplied
+    if (!is.null(trial_db)) {
+      tr_val  <- all_keys[[trial_col]][[i]]
+      tdb_row <- trial_db[trial_db[[trial_col]] == tr_val, , drop = FALSE]
+      if (nrow(tdb_row) >= 1L) {
+        disp_on  <- tdb_row$t_display_on[[1L]]
+        disp_off <- tdb_row$t_display_off[[1L]]
+        if (!is.na(disp_on)) {
+          trial_fix <- trial_fix[trial_fix$start_time > disp_on, , drop = FALSE]
+        }
+        if (!is.na(disp_off)) {
+          trial_fix <- trial_fix[trial_fix$end_time < disp_off, , drop = FALSE]
+        }
+      }
+    }
+
     measures  <- .compute_trial_measures(trial_fix)
     # Attach key columns
     for (col in names(all_keys)) {

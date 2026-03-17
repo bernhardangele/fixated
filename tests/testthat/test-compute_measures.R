@@ -144,3 +144,79 @@ test_that("compute_eye_measures FFD is NA when word was skipped", {
   expect_equal(nrow(result), 1L)
   expect_equal(result$word_id, 3L)
 })
+
+# ---------------------------------------------------------------------------
+# trial_db display-on / display-off filtering tests
+# ---------------------------------------------------------------------------
+
+make_test_trial_db <- function(display_on = -50L, display_off = 800L) {
+  dplyr::tibble(
+    trial_nr     = 1L,
+    t_display_on  = display_on,
+    t_display_off = display_off
+  )
+}
+
+test_that("compute_eye_measures trial_db: no filtering when trial_db is NULL", {
+  result_no_db <- compute_eye_measures(make_test_fixations(), make_test_roi())
+  result_null  <- compute_eye_measures(make_test_fixations(), make_test_roi(), trial_db = NULL)
+  expect_equal(result_no_db, result_null)
+})
+
+test_that("compute_eye_measures trial_db: all fixations pass wide display window", {
+  # Display window wider than all fixations: nothing should be filtered out
+  trial_db <- make_test_trial_db(display_on = -100L, display_off = 1000L)
+  result   <- compute_eye_measures(make_test_fixations(), make_test_roi(), trial_db = trial_db)
+  result_no_filter <- compute_eye_measures(make_test_fixations(), make_test_roi())
+  expect_equal(result, result_no_filter)
+})
+
+test_that("compute_eye_measures trial_db: fixation starting before display_on is excluded", {
+  # Custom fixations: only one fixation on word 1 (start_time=0, before display_on=50)
+  # and one fixation on word 2 (start_time=200, after display_on=50)
+  fixations <- dplyr::tibble(
+    trial_nr   = 1L,
+    start_time = c(0L,   200L),
+    end_time   = c(150L, 380L),
+    duration   = c(150L, 180L),
+    avg_x      = c(145,  260),
+    avg_y      = c(400,  400)
+  )
+  trial_db <- make_test_trial_db(display_on = 50L, display_off = 800L)
+  result   <- compute_eye_measures(fixations, make_test_roi(), trial_db = trial_db)
+  # Word 1 should have no fixations (its only fixation starts at 0, which is NOT > 50)
+  expect_false(1L %in% result$word_id)
+  # Word 2 should still appear (start_time=200 > 50)
+  expect_true(2L %in% result$word_id)
+})
+
+test_that("compute_eye_measures trial_db: fixation ending after display_off is excluded", {
+  # make_test_fixations() fixation 4: start_time=600, end_time=750 (word 3)
+  # Set display_off = 700 so that fixation 4 (end_time 750 >= 700) is excluded
+  trial_db <- make_test_trial_db(display_on = -100L, display_off = 700L)
+  result   <- compute_eye_measures(make_test_fixations(), make_test_roi(), trial_db = trial_db)
+  # Word 3 should have no fixations now (fixation ends at 750, after display_off=700)
+  expect_false(3L %in% result$word_id)
+})
+
+test_that("compute_eye_measures trial_db: NA display_on disables lower bound", {
+  trial_db <- make_test_trial_db(display_on = NA_integer_, display_off = 800L)
+  result   <- compute_eye_measures(make_test_fixations(), make_test_roi(), trial_db = trial_db)
+  result_no_filter <- compute_eye_measures(make_test_fixations(), make_test_roi())
+  expect_equal(result, result_no_filter)
+})
+
+test_that("compute_eye_measures trial_db: NA display_off disables upper bound", {
+  trial_db <- make_test_trial_db(display_on = -100L, display_off = NA_integer_)
+  result   <- compute_eye_measures(make_test_fixations(), make_test_roi(), trial_db = trial_db)
+  result_no_filter <- compute_eye_measures(make_test_fixations(), make_test_roi())
+  expect_equal(result, result_no_filter)
+})
+
+test_that("compute_eye_measures trial_db: errors on missing trial_db columns", {
+  bad_tdb <- dplyr::tibble(trial_nr = 1L, t_display_on = 0L)
+  expect_error(
+    compute_eye_measures(make_test_fixations(), make_test_roi(), trial_db = bad_tdb),
+    "missing columns"
+  )
+})
