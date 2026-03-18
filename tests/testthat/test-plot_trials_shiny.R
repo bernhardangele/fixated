@@ -43,35 +43,33 @@ test_that("plot_trials_shiny errors when asc_result is not a list", {
 })
 
 # ---------------------------------------------------------------------------
-# Internal helper: .shiny_trial_nrs
+# Internal helper: .shiny_trial_choices
 # ---------------------------------------------------------------------------
 
-test_that(".shiny_trial_nrs returns trial_nrs from trial_db when present", {
-  asc_result <- list(
-    samples  = dplyr::tibble(time = 1:4, x = 1:4, y = 1:4, eye = "R",
-                              trial_nr = c(1L, 1L, 2L, 2L)),
-    events   = dplyr::tibble(),
-    trial_db = dplyr::tibble(trial_nr = c(1L, 2L))
-  )
-  nrs <- fixated:::.shiny_trial_nrs(asc_result)
-  expect_equal(nrs, c(1L, 2L))
+test_that(".shiny_trial_choices returns trials from trial_db when present", {
+  samples  <- dplyr::tibble(time = 1:4, x = 1:4, y = 1:4, eye = "R",
+                            trial_nr = c(1L, 1L, 2L, 2L))
+  trial_db <- dplyr::tibble(trial_nr = c(1L, 2L))
+  
+  choices <- fixated:::.shiny_trial_choices(samples, NULL, NULL, NULL, trial_db)
+  expect_equal(choices, c(`Trial 1` = 1L, `Trial 2` = 2L))
 })
 
-test_that(".shiny_trial_nrs falls back to samples$trial_nr when no trial_db", {
-  asc_result <- list(
-    samples = dplyr::tibble(time = 1:4, x = 1:4, y = 1:4, eye = "R",
-                             trial_nr = c(3L, 3L, 5L, 5L)),
-    events  = dplyr::tibble()
-  )
-  nrs <- fixated:::.shiny_trial_nrs(asc_result)
-  expect_equal(nrs, c(3L, 5L))
+test_that(".shiny_trial_choices includes sentence_nr when present in trial_db", {
+  trial_db <- dplyr::tibble(trial_nr = c(1L, 2L), sentence_nr = c(10L, 20L))
+  choices <- fixated:::.shiny_trial_choices(NULL, NULL, NULL, NULL, trial_db)
+  expect_equal(choices, c(`Trial 1 (Sentence 10)` = 1L, `Trial 2 (Sentence 20)` = 2L))
 })
 
-test_that(".shiny_trial_nrs returns 0L as fallback when no trial info", {
-  asc_result <- list(
-    samples = dplyr::tibble(time = 1:3, x = 1:3, y = 1:3, eye = "R"),
-    events  = dplyr::tibble()
-  )
-  nrs <- fixated:::.shiny_trial_nrs(asc_result)
-  expect_equal(nrs, 0L)
+test_that(".shiny_trial_choices falls back to samples$trial_nr when no trial_db", {
+  samples <- dplyr::tibble(time = 1:4, x = 1:4, y = 1:4, eye = "R",
+                           trial_nr = c(3L, 3L, 5L, 5L))
+  choices <- fixated:::.shiny_trial_choices(samples, NULL, NULL, NULL, NULL)
+  expect_equal(choices, c(`Trial 3` = 3L, `Trial 5` = 5L))
+})
+
+test_that(".shiny_trial_choices returns 0L fallback when no trial info", {
+  samples <- dplyr::tibble(time = 1:3, x = 1:3, y = 1:3, eye = "R")
+  choices <- fixated:::.shiny_trial_choices(samples, NULL, NULL, NULL, NULL)
+  expect_equal(choices, c(`Trial 0` = 0L))
 })

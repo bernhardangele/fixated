@@ -46,6 +46,7 @@ A \link[tibble:tibble]{tibble} with one row per trial × word
 combination that received at least one fixation.  Columns:
 \describe{
 \item{\code{trial}}{Trial identifier.}
+\item{\code{sentence_nr}}{Sentence/item identifier (if available in \code{roi}).}
 \item{\code{word_id}}{Integer word index.}
 \item{\code{word}}{Word string (if available and \code{include_word_col = TRUE}).}
 \item{\code{ffd}}{First fixation duration (ms); \code{NA} if not applicable.}

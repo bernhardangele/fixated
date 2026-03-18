@@ -7,7 +7,8 @@
 read_roi(
   path,
   col_map = c(trial_nr = "trial_nr", word_id = "word_id", word = "word", x_start =
-    "x_start", x_end = "x_end", y_start = "y_start", y_end = "y_end"),
+    "x_start", x_end = "x_end", y_start = "y_start", y_end = "y_end", sentence_nr =
+    "sentence_nr"),
   ...
 )
 }
@@ -24,14 +25,16 @@ actual column names present in the CSV.  Canonical names and defaults:
 \item \code{"x_end"} → \code{"x_end"} – right edge of ROI in pixels (\strong{required}).
 \item \code{"y_start"} → \code{"y_start"} – top edge of ROI in pixels (\strong{required}).
 \item \code{"y_end"} → \code{"y_end"} – bottom edge of ROI in pixels (\strong{required}).
+\item \code{"sentence_nr"} → \code{"sentence_nr"} – sentence/item index (optional).
 }}
 
 \item{...}{Additional arguments forwarded to \code{\link[readr:read_delim]{readr::read_csv()}}.}
 }
 \value{
 A \link[tibble:tibble]{tibble} with columns \code{trial_nr}, \code{word_id},
-\code{x_start}, \code{x_end}, \code{y_start}, \code{y_end}, and (if present) \code{word}, all
-with canonical names.  Sorted by \code{trial_nr}, then \code{word_id}.
+\code{x_start}, \code{x_end}, \code{y_start}, \code{y_end}, and (if present) \code{word} and
+\code{sentence_nr}, all with canonical names.  Sorted by \code{trial_nr}, then
+\code{word_id}.
 }
 \description{
 Reads a CSV file that describes the rectangular regions of interest (ROIs)

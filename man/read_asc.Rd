@@ -53,15 +53,16 @@ A named list with elements:
 \item{\code{samples}}{A \link[tibble:tibble]{tibble} with columns
 \code{time} (integer, ms), \code{x} (double, pixels), \code{y} (double, pixels),
 \code{pupil} (double), \code{eye} (character, \code{"L"} or \code{"R"}).  When trial
-information is found a \code{trial_nr} column is also included.}
+information is found \code{trial_nr} and \code{sentence_nr} columns are also
+included.}
 \item{\code{events}}{A \link[tibble:tibble]{tibble} with columns \code{type}
 (\code{"FIXATION"}, \code{"SACCADE"}, or \code{"BLINK"}), \code{eye}, \code{start_time},
 \code{end_time}, \code{duration}, \code{x_start}, \code{y_start}, \code{x_end}, \code{y_end},
-\code{avg_x}, \code{avg_y}, \code{avg_pupil}.  When trial information is found a
-\code{trial_nr} column is also included.}
+\code{avg_x}, \code{avg_y}, \code{avg_pupil}.  When trial information is found
+\code{trial_nr} and \code{sentence_nr} columns are also included.}
 \item{\code{word_boundaries}}{A \link[tibble:tibble]{tibble} with columns
-\code{trial_nr}, \code{item_nr}, \code{word_nr}, \code{word}, \code{right_boundary}
-(pixels), parsed from \verb{TRIAL … ITEM … WORD … RIGHT_BOUNDARY …}
+\code{trial_nr}, \code{sentence_nr}, \code{word_id}, \code{word}, \code{x_start}, \code{x_end},
+\code{y_start}, \code{y_end}, parsed from \verb{TRIAL … ITEM … WORD …}
 messages written by OpenSesame.  \code{NULL} when no such messages are
 found.}
 \item{\code{calibration}}{A \link[tibble:tibble]{tibble} with columns \code{eye},
@@ -69,7 +70,7 @@ found.}
 \code{y_offset}, parsed from \verb{!CAL VALIDATION} messages.  \code{NULL} when
 no such messages are found.}
 \item{\code{trial_db}}{A \link[tibble:tibble]{tibble} with one row per trial
-and columns \code{trial_nr}, \code{item_nr}, \code{t_trial_start},
+and columns \code{trial_nr}, \code{sentence_nr}, \code{t_trial_start},
 \code{t_recording_start}, \code{t_gaze_target_on}, \code{t_gaze_target_off},
 \code{t_display_on}, \code{t_display_off}, \code{t_trial_end}, \code{has_display_off}.
 When \code{parse_vars = TRUE} and \code{eye_tracker = "eyelink_opensesame"},

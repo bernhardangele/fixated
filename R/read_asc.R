@@ -45,15 +45,16 @@
 #'     \item{`samples`}{A [tibble][tibble::tibble] with columns
 #'       `time` (integer, ms), `x` (double, pixels), `y` (double, pixels),
 #'       `pupil` (double), `eye` (character, `"L"` or `"R"`).  When trial
-#'       information is found a `trial_nr` column is also included.}
+#'       information is found `trial_nr` and `sentence_nr` columns are also
+#'       included.}
 #'     \item{`events`}{A [tibble][tibble::tibble] with columns `type`
 #'       (`"FIXATION"`, `"SACCADE"`, or `"BLINK"`), `eye`, `start_time`,
 #'       `end_time`, `duration`, `x_start`, `y_start`, `x_end`, `y_end`,
-#'       `avg_x`, `avg_y`, `avg_pupil`.  When trial information is found a
-#'       `trial_nr` column is also included.}
+#'       `avg_x`, `avg_y`, `avg_pupil`.  When trial information is found
+#'       `trial_nr` and `sentence_nr` columns are also included.}
 #'     \item{`word_boundaries`}{A [tibble][tibble::tibble] with columns
-#'       `trial_nr`, `item_nr`, `word_nr`, `word`, `right_boundary`
-#'       (pixels), parsed from `TRIAL … ITEM … WORD … RIGHT_BOUNDARY …`
+#'       `trial_nr`, `sentence_nr`, `word_id`, `word`, `x_start`, `x_end`,
+#'       `y_start`, `y_end`, parsed from `TRIAL … ITEM … WORD …`
 #'       messages written by OpenSesame.  `NULL` when no such messages are
 #'       found.}
 #'     \item{`calibration`}{A [tibble][tibble::tibble] with columns `eye`,
@@ -61,7 +62,7 @@
 #'       `y_offset`, parsed from `!CAL VALIDATION` messages.  `NULL` when
 #'       no such messages are found.}
 #'     \item{`trial_db`}{A [tibble][tibble::tibble] with one row per trial
-#'       and columns `trial_nr`, `item_nr`, `t_trial_start`,
+#'       and columns `trial_nr`, `sentence_nr`, `t_trial_start`,
 #'       `t_recording_start`, `t_gaze_target_on`, `t_gaze_target_off`,
 #'       `t_display_on`, `t_display_off`, `t_trial_end`, `has_display_off`.
 #'       When `parse_vars = TRUE` and `eye_tracker = "eyelink_opensesame"`,
@@ -144,6 +145,11 @@ read_asc <- function(path,
     if (!is.null(trial_db) && nrow(trial_db) > 0L) {
       samples <- .assign_trial_nr(samples, trial_db, time_col = "time")
       events  <- .assign_trial_nr(events,  trial_db, time_col = "start_time")
+
+      # Join sentence_nr based on trial_nr
+      lookup <- trial_db[, c("trial_nr", "sentence_nr")]
+      samples <- dplyr::left_join(samples, lookup, by = "trial_nr")
+      events <- dplyr::left_join(events, lookup, by = "trial_nr")
     }
   }
 
@@ -202,7 +208,7 @@ read_asc <- function(path,
     word_boundaries <- dplyr::bind_rows(wb_processed)
 
     # Final column ordering to match read_roi
-    desired_cols <- c("trial_nr", "word_id", "word", "x_start", "x_end", "y_start", "y_end")
+    desired_cols <- c("trial_nr", "sentence_nr", "word_id", "word", "x_start", "x_end", "y_start", "y_end")
     existing_cols <- names(word_boundaries)
     col_order <- c(intersect(desired_cols, existing_cols), setdiff(existing_cols, desired_cols))
     word_boundaries <- word_boundaries[, col_order]
@@ -281,9 +287,11 @@ read_asc <- function(path,
   # Binocular: time + 6 decimal fields + 5-char status flags
   # Monocular: time + 4 decimal fields (x, y, pupil, vel/flags) + 3-char status flags
   if (is_binocular) {
-    sample_pattern <- "^\\d{5,10}(?:\\s+\\-{0,1}\\d{0,5}\\.{1}\\d{0,1}){6}\\s[\\.ICR]{5}$"
+    # Binocular: time + 6 data columns + optional flags
+    sample_pattern <- "^\\d+\\s+[^a-zA-Z]+"
   } else {
-    sample_pattern <- "^\\d{5,10}(?:\\s+\\-{0,1}\\d{0,5}\\.{1}\\d{0,1}){4}\\s[\\.ICR]{3}$"
+    # Monocular: time + 4 data columns + optional flags
+    sample_pattern <- "^\\d+\\s+[^a-zA-Z]+"
   }
   s_idx <- which(stringr::str_detect(lines, sample_pattern, negate = FALSE))
   if (length(s_idx) == 0L) {
@@ -631,20 +639,20 @@ read_asc <- function(path,
   # Upper line boundary for each trial (exclusive): first line of next trial
   next_start <- c(start_idx[-1L], n_lines + 1L)
 
-  # --- extract trial_nr, item_nr, t_trial_start from WORD 1 messages --------
+  # --- extract trial_nr, sentence_nr, t_trial_start from WORD 1 messages --------
   wb_pat    <- "^MSG\\t(\\d+)\\s+TRIAL\\s+(\\d+)\\s+ITEM\\s+(\\d+)\\s+WORD\\s+1\\b"
   m_start   <- stringr::str_match(lines[start_idx], wb_pat)
   t_starts  <- suppressWarnings(as.integer(m_start[, 2L]))
   trial_nrs <- suppressWarnings(as.integer(m_start[, 3L]))
-  item_nrs  <- suppressWarnings(as.integer(m_start[, 4L]))
+  sent_nrs  <- suppressWarnings(as.integer(m_start[, 4L]))
 
-  # If the pattern did not produce trial_nr/item_nr (custom tracker), use
+  # If the pattern did not produce trial_nr/sentence_nr (custom tracker), use
   # sequential indices and try to pull a timestamp from generic MSG lines.
   if (all(is.na(trial_nrs))) {
     m_gen     <- stringr::str_match(lines[start_idx], "^MSG\\t(\\d+)")
     t_starts  <- suppressWarnings(as.integer(m_gen[, 2L]))
     trial_nrs <- seq_len(n_trials)
-    item_nrs  <- rep(NA_integer_, n_trials)
+    sent_nrs  <- rep(NA_integer_, n_trials)
   }
 
   # --- find END timestamps --------------------------------------------------
@@ -708,7 +716,7 @@ read_asc <- function(path,
   # --- assemble trial_db ----------------------------------------------------
   trial_db <- dplyr::tibble(
     trial_nr          = trial_nrs,
-    item_nr           = item_nrs,
+    sentence_nr       = sent_nrs,
     t_trial_start     = t_starts,
     t_recording_start = t_rec_start,
     t_gaze_target_on  = t_gaze_on,

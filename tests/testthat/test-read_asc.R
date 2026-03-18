@@ -81,7 +81,7 @@ test_that("trial_db has required columns", {
   skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
   result <- read_asc(asc_file)
   tdb    <- result$trial_db
-  expected <- c("trial_nr", "item_nr", "t_trial_start",
+  expected <- c("trial_nr", "sentence_nr", "t_trial_start",
                 "t_recording_start", "t_gaze_target_on", "t_gaze_target_off",
                 "t_display_on", "t_display_off", "t_trial_end",
                 "has_display_off")
@@ -145,7 +145,7 @@ test_that("trial_db has no var columns when parse_vars = FALSE", {
   skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
   result <- read_asc(asc_file, parse_vars = FALSE)
   tdb    <- result$trial_db
-  base_cols <- c("trial_nr", "item_nr", "t_trial_start", "t_recording_start",
+  base_cols <- c("trial_nr", "sentence_nr", "t_trial_start", "t_recording_start",
                  "t_gaze_target_on", "t_gaze_target_off", "t_display_on",
                  "t_display_off", "t_trial_end", "has_display_off")
   expect_equal(sort(names(tdb)), sort(base_cols))

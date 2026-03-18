@@ -4,20 +4,36 @@
 \alias{plot_trials_shiny}
 \title{Launch an interactive Shiny app to visualise eye-tracking trials}
 \usage{
-plot_trials_shiny(asc_result, roi = NULL, launch.browser = TRUE)
+plot_trials_shiny(
+  asc_result = NULL,
+  samples = NULL,
+  fixations = NULL,
+  rois = NULL,
+  measures = NULL,
+  roi = NULL,
+  trial_db = NULL,
+  launch.browser = TRUE
+)
 }
 \arguments{
 \item{asc_result}{A named list as returned by \code{\link{read_asc}},
-containing at minimum \code{samples} and \code{events}.  When the list also
-includes \code{word_boundaries} and/or \code{trial_db} those are used
-automatically.}
+containing at minimum \code{samples} and \code{events}.  If you prefer not to use \code{read_asc},
+you may set this to \code{NULL} and provide the other data frames individually.}
+
+\item{samples}{A data frame of raw gaze samples.}
+
+\item{fixations}{A data frame of detected fixations.}
+
+\item{rois}{A data frame of word regions of interest. Takes precedence over
+\code{asc_result$word_boundaries}.}
+
+\item{measures}{A data frame of word measures. If provided, the app will not
+recompute measures internally.}
 
 \item{roi}{A data frame of word regions of interest as returned by
-\code{\link{read_roi}}, or any compatible data frame with columns
-\code{word_id}, \code{x_start}, \code{x_end}, \code{y_start}, \code{y_end}.  When supplied it
-takes precedence over \code{asc_result$word_boundaries} for boundary and
-label overlays.  Pass \code{NULL} (the default) to use
-\code{asc_result$word_boundaries} instead.}
+\code{\link{read_roi}}. Alias for \code{rois}.}
+
+\item{trial_db}{A data frame containing trial metadata (e.g. \code{t_display_on}).}
 
 \item{launch.browser}{Logical.  Passed to
 \code{\link[shiny]{shinyApp}}'s \code{options} list as the \code{launch.browser}
@@ -42,6 +58,7 @@ detailed tooltips, and zoom / pan the view.
 \item{Trial Number}{Select any trial by its \code{trial_nr} (or sequential
 index when no \code{trial_nr} column is present). Use the
 \strong{Previous} / \strong{Next} buttons to step through trials one by one.}
+\item{Sentence Number}{Select any trial by its \code{sentence_nr} if present in the data.}
 \item{Eye}{Choose which eye's data to display (\code{L} for left, \code{R} for
 right).}
 \item{Display window filter}{Optionally restrict samples and fixations

@@ -20,11 +20,13 @@
 #'   * `"x_end"` → `"x_end"` – right edge of ROI in pixels (**required**).
 #'   * `"y_start"` → `"y_start"` – top edge of ROI in pixels (**required**).
 #'   * `"y_end"` → `"y_end"` – bottom edge of ROI in pixels (**required**).
+#'   * `"sentence_nr"` → `"sentence_nr"` – sentence/item index (optional).
 #' @param ... Additional arguments forwarded to [readr::read_csv()].
 #'
 #' @return A [tibble][tibble::tibble] with columns `trial_nr`, `word_id`,
-#'   `x_start`, `x_end`, `y_start`, `y_end`, and (if present) `word`, all
-#'   with canonical names.  Sorted by `trial_nr`, then `word_id`.
+#'   `x_start`, `x_end`, `y_start`, `y_end`, and (if present) `word` and
+#'   `sentence_nr`, all with canonical names.  Sorted by `trial_nr`, then
+#'   `word_id`.
 #'
 #' @importFrom readr read_csv
 #' @importFrom dplyr mutate arrange rename select tibble
@@ -47,7 +49,8 @@ read_roi <- function(
       x_start  = "x_start",
       x_end    = "x_end",
       y_start  = "y_start",
-      y_end    = "y_end"
+      y_end    = "y_end",
+      sentence_nr = "sentence_nr"
     ),
     ...
 ) {

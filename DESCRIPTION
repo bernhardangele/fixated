@@ -28,5 +28,6 @@ Suggests:
     plotly,
     png,
     rmarkdown,
-    shiny
+    shiny,
+    shinyjs
 Config/testthat/edition: 3

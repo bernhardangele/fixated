@@ -8,15 +8,17 @@
 #' detailed tooltips, and zoom / pan the view.
 #'
 #' @param asc_result A named list as returned by \code{\link{read_asc}},
-#'   containing at minimum `samples` and `events`.  When the list also
-#'   includes `word_boundaries` and/or `trial_db` those are used
-#'   automatically.
+#'   containing at minimum `samples` and `events`.  If you prefer not to use `read_asc`,
+#'   you may set this to `NULL` and provide the other data frames individually.
+#' @param samples A data frame of raw gaze samples.
+#' @param fixations A data frame of detected fixations.
+#' @param rois A data frame of word regions of interest. Takes precedence over
+#'   `asc_result$word_boundaries`.
+#' @param measures A data frame of word measures. If provided, the app will not
+#'   recompute measures internally.
 #' @param roi A data frame of word regions of interest as returned by
-#'   \code{\link{read_roi}}, or any compatible data frame with columns
-#'   `word_id`, `x_start`, `x_end`, `y_start`, `y_end`.  When supplied it
-#'   takes precedence over `asc_result$word_boundaries` for boundary and
-#'   label overlays.  Pass `NULL` (the default) to use
-#'   `asc_result$word_boundaries` instead.
+#'   \code{\link{read_roi}}. Alias for `rois`.
+#' @param trial_db A data frame containing trial metadata (e.g. `t_display_on`).
 #' @param launch.browser Logical.  Passed to
 #'   \code{\link[shiny]{shinyApp}}'s `options` list as the `launch.browser`
 #'   element.  Defaults to `TRUE`.
@@ -31,6 +33,7 @@
 #'   \item{Trial Number}{Select any trial by its `trial_nr` (or sequential
 #'     index when no `trial_nr` column is present). Use the
 #'     **Previous** / **Next** buttons to step through trials one by one.}
+#'   \item{Sentence Number}{Select any trial by its `sentence_nr` if present in the data.}
 #'   \item{Eye}{Choose which eye's data to display (`L` for left, `R` for
 #'     right).}
 #'   \item{Display window filter}{Optionally restrict samples and fixations
@@ -51,7 +54,7 @@
 #' their availability at call time and stops with an informative message if
 #' any are missing.
 #'
-#' @importFrom dplyr filter mutate tibble
+#' @importFrom dplyr filter mutate tibble left_join across where
 #' @importFrom rlang .data
 #'
 #' @export
@@ -64,10 +67,13 @@
 #'   plot_trials_shiny(result)
 #' }
 #' }
-plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
+plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
+                               fixations = NULL, rois = NULL, measures = NULL,
+                               roi = NULL, trial_db = NULL,
+                               launch.browser = TRUE) {
 
   # ---- dependency checks ----------------------------------------------------
-  for (pkg in c("shiny", "plotly", "DT", "ggplot2")) {
+  for (pkg in c("shiny", "plotly", "DT", "ggplot2", "shinyjs")) {
     if (!requireNamespace(pkg, quietly = TRUE)) {
       stop(
         "Package '", pkg, "' is required for plot_trials_shiny(). ",
@@ -76,34 +82,74 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
     }
   }
 
-  stopifnot(is.list(asc_result))
-  if (!all(c("samples", "events") %in% names(asc_result))) {
-    stop("asc_result must contain 'samples' and 'events' elements.")
+  # ---- parse arguments ------------------------------------------------------
+  if (!is.null(roi) && is.null(rois)) {
+    rois <- roi
   }
 
+  if (is.null(asc_result)) {
+    if (is.null(samples) && is.null(fixations)) {
+      stop("You must provide either 'asc_result' or 'samples' and 'fixations'.")
+    }
+  } else {
+    stopifnot(is.list(asc_result))
+    if (!all(c("samples", "events") %in% names(asc_result))) {
+      stop("asc_result must contain 'samples' and 'events' elements.")
+    }
+    if (is.null(samples)) samples <- asc_result$samples
+    if (is.null(fixations)) {
+      fixations <- tryCatch(
+        get_eyelink_fixations(asc_result$events),
+        error = function(e) NULL
+      )
+    }
+    if (is.null(rois)) rois <- asc_result$word_boundaries
+    if (is.null(trial_db)) trial_db <- asc_result$trial_db
+  }
+
+  # ---- mismatch trials check ------------------------------------------------
+  .check_trial_mismatch(samples, fixations, rois, measures, trial_db)
+
   # ---- determine available trials -------------------------------------------
-  trial_nrs <- .shiny_trial_nrs(asc_result)
-  n_trials  <- length(trial_nrs)
+  trial_info    <- .shiny_trial_choices(samples, fixations, rois, measures, trial_db)
+  trial_choices <- trial_info$trial_choices
+  sent_choices  <- trial_info$sentence_choices
+  mapping       <- trial_info$mapping
+  
+  n_trials      <- length(trial_choices)
+  if (n_trials == 0L) {
+    stop("No trials found in the provided data.")
+  }
 
   # ---- build UI ---------------------------------------------------------------
   ui <- shiny::fluidPage(
+    shinyjs::useShinyjs(),
     shiny::titlePanel("Eye-Tracking Trial Visualisation"),
     shiny::sidebarLayout(
       shiny::sidebarPanel(
-        shiny::numericInput("trial_idx", "Trial index:",
-                            value = 1L, min = 1L, max = n_trials, step = 1L),
+        shiny::selectizeInput("trial_sel", "Trial:", choices = trial_choices),
         shiny::actionButton("prevBtn", "Previous"),
         shiny::actionButton("nextBtn", "Next"),
         shiny::hr(),
+        if (!is.null(sent_choices)) {
+          shiny::selectizeInput("sent_sel", "Sentence Number:", choices = sent_choices)
+        } else {
+          NULL
+        },
+        if (!is.null(sent_choices)) shiny::hr() else NULL,
         shiny::selectInput("eye", "Eye to plot:", choices = c("R", "L"),
                            selected = "R"),
         shiny::hr(),
-        shiny::checkboxInput("filter_display_on",
-                             "Remove samples before display onset",
-                             value = TRUE),
-        shiny::checkboxInput("filter_display_off",
-                             "Remove samples after display offset",
-                             value = TRUE),
+        shiny::div(
+          id = "display_filter_container",
+          title = if (is.null(trial_db)) "Disabled because trial_db or asc_result was not provided" else "",
+          shiny::checkboxInput("filter_display_on",
+                               "Remove samples before display onset",
+                               value = TRUE),
+          shiny::checkboxInput("filter_display_off",
+                               "Remove samples after display offset",
+                               value = TRUE)
+        ),
         shiny::hr(),
         shiny::checkboxInput("show_samples",
                              "Show raw gaze samples", value = TRUE),
@@ -160,37 +206,81 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
   # ---- server -----------------------------------------------------------------
   server <- function(input, output, session) {
 
+    # -- handle trial_db presence ---------------------------------------------
+    if (is.null(trial_db)) {
+      shinyjs::disable("filter_display_on")
+      shinyjs::disable("filter_display_off")
+    }
+
     # -- navigation buttons ---------------------------------------------------
     shiny::observeEvent(input$prevBtn, {
-      v <- max(1L, input$trial_idx - 1L)
-      shiny::updateNumericInput(session, "trial_idx", value = v)
+      idx <- match(input$trial_sel, trial_choices)
+      if (idx > 1L) {
+        shiny::updateSelectInput(session, "trial_sel", selected = trial_choices[[idx - 1L]])
+      }
     })
     shiny::observeEvent(input$nextBtn, {
-      v <- min(n_trials, input$trial_idx + 1L)
-      shiny::updateNumericInput(session, "trial_idx", value = v)
+      idx <- match(input$trial_sel, trial_choices)
+      if (idx < n_trials) {
+        shiny::updateSelectInput(session, "trial_sel", selected = trial_choices[[idx + 1L]])
+      }
     })
+
+    # -- trial/sentence sync --------------------------------------------------
+    # When trial changes, update sentence
+    if (!is.null(sent_choices)) {
+      shiny::observe({
+        shiny::req(input$trial_sel)
+        tnr <- as.integer(input$trial_sel)
+        snr <- mapping$sentence_nr[mapping$trial_nr == tnr]
+        if (length(snr) > 0 && !is.na(snr[1])) {
+          shiny::updateSelectInput(session, "sent_sel", selected = as.character(snr[1]))
+        }
+      })
+      
+      # When sentence changes, update trial (if trial does not match the sentence)
+      shiny::observeEvent(input$sent_sel, {
+        snr <- as.integer(input$sent_sel)
+        tnr <- as.integer(input$trial_sel)
+        
+        # Check if current trial belongs to this sentence
+        current_snr <- mapping$sentence_nr[mapping$trial_nr == tnr]
+        if (length(current_snr) == 0 || is.na(current_snr[1]) || current_snr[1] != snr) {
+          # Pick the first trial for this sentence
+          matching_trials <- mapping$trial_nr[mapping$sentence_nr == snr]
+          if (length(matching_trials) > 0) {
+            shiny::updateSelectInput(session, "trial_sel", selected = as.character(matching_trials[1]))
+          }
+        }
+      }, ignoreInit = TRUE)
+    }
 
     # -- reactive helpers -------------------------------------------------------
 
     # Current trial_nr (actual value from the data)
     current_tnr <- shiny::reactive({
-      idx <- max(1L, min(n_trials, as.integer(input$trial_idx)))
-      trial_nrs[[idx]]
+      if (is.numeric(trial_choices)) {
+        as.integer(input$trial_sel)
+      } else {
+        # Fallback if character
+        utils::type.convert(input$trial_sel, as.is = TRUE)
+      }
     })
 
     # Resolve display window timestamps for the current trial
     display_times <- shiny::reactive({
       tnr  <- current_tnr()
-      tdb  <- asc_result$trial_db
+      tdb  <- trial_db
       t_on <- NA_real_
       t_off <- NA_real_
       if (!is.null(tdb)) {
         row <- if ("trial_nr" %in% names(tdb)) {
           tdb[tdb$trial_nr == tnr, , drop = FALSE]
+        } else if ("trial" %in% names(tdb)) {
+          tdb[tdb$trial == tnr, , drop = FALSE]
         } else {
-          # No trial_nr column: use the 1-based trial index as a row selector
-          idx <- max(1L, min(nrow(tdb), as.integer(input$trial_idx)))
-          tdb[idx, , drop = FALSE]
+          # Assume first col is trial ID
+          tdb[tdb[[1L]] == tnr, , drop = FALSE]
         }
         if (nrow(row) > 0L) {
           if ("t_display_on"  %in% names(row)) t_on  <- as.numeric(row$t_display_on[[1L]])
@@ -204,9 +294,11 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
     trial_samples <- shiny::reactive({
       tnr   <- current_tnr()
       eye   <- input$eye
-      samp  <- asc_result$samples
+      samp  <- samples
       if ("trial_nr" %in% names(samp)) {
         samp <- dplyr::filter(samp, .data$trial_nr == tnr)
+      } else if ("trial" %in% names(samp)) {
+        samp <- dplyr::filter(samp, .data$trial == tnr)
       }
       if ("eye" %in% names(samp)) {
         samp <- dplyr::filter(samp, .data$eye == !!eye)
@@ -242,15 +334,15 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
     trial_fixations <- shiny::reactive({
       tnr  <- current_tnr()
       eye  <- input$eye
-      evts <- asc_result$events
-      if ("trial_nr" %in% names(evts)) {
-        evts <- dplyr::filter(evts, .data$trial_nr == tnr)
-      }
-      fix <- tryCatch(
-        get_eyelink_fixations(evts),
-        error = function(e) NULL
-      )
+      fix  <- fixations
       if (is.null(fix) || nrow(fix) == 0L) return(NULL)
+      
+      if ("trial_nr" %in% names(fix)) {
+        fix <- dplyr::filter(fix, .data$trial_nr == tnr)
+      } else if ("trial" %in% names(fix)) {
+        fix <- dplyr::filter(fix, .data$trial == tnr)
+      }
+      if (nrow(fix) == 0L) return(NULL)
       fix <- dplyr::filter(fix, .data$eye == !!eye)
       dt  <- display_times()
       if (input$filter_display_on  && !is.na(dt$t_on))  {
@@ -270,17 +362,13 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
     trial_wb <- shiny::reactive({
       tnr <- current_tnr()
       wb  <- NULL
-      if (!is.null(roi)) {
-        wb <- if ("trial_nr" %in% names(roi)) {
-          dplyr::filter(roi, .data$trial_nr == tnr)
+      if (!is.null(rois)) {
+        wb <- if ("trial_nr" %in% names(rois)) {
+          dplyr::filter(rois, .data$trial_nr == tnr)
+        } else if ("trial" %in% names(rois)) {
+          dplyr::filter(rois, .data$trial == tnr)
         } else {
-          roi
-        }
-      } else if (!is.null(asc_result$word_boundaries)) {
-        wb <- if ("trial_nr" %in% names(asc_result$word_boundaries)) {
-          dplyr::filter(asc_result$word_boundaries, .data$trial_nr == tnr)
-        } else {
-          asc_result$word_boundaries
+          rois
         }
       }
       wb
@@ -289,9 +377,19 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
     # Word measures (FFD, GD, TVT) – computed only when needed
     word_measures <- shiny::reactive({
       shiny::req(input$show_measures)
+      tnr <- current_tnr()
+      if (!is.null(measures)) {
+        wm <- if ("trial_nr" %in% names(measures)) {
+          dplyr::filter(measures, .data$trial_nr == tnr)
+        } else if ("trial" %in% names(measures)) {
+          dplyr::filter(measures, .data$trial == tnr)
+        } else {
+          measures
+        }
+        return(wm)
+      }
       wb  <- trial_wb()
       fix <- trial_fixations()
-      tnr <- current_tnr()
       if (is.null(wb) || nrow(wb) == 0L) return(NULL)
       if (!all(c("x_start", "x_end", "y_start", "y_end") %in% names(wb))) return(NULL)
       if (is.null(fix) || nrow(fix) == 0L) return(NULL)
@@ -314,22 +412,24 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
       if (!is.null(input$bg_image)) {
         img_path <- input$bg_image$datapath
         img_name <- input$bg_image$name
-        bg_dims  <- NULL
-        if (grepl("\\.png$", img_name, ignore.case = TRUE) &&
-            requireNamespace("png", quietly = TRUE)) {
-          bg_dims <- dim(png::readPNG(img_path))[1:2]
-        } else if (grepl("\\.jpe?g$", img_name, ignore.case = TRUE) &&
-                   requireNamespace("jpeg", quietly = TRUE)) {
-          bg_dims <- dim(jpeg::readJPEG(img_path))[1:2]
-        }
-        if (!is.null(bg_dims)) {
-          msgs[[length(msgs) + 1L]] <- shiny::div(
-            style = paste0("color:#856404;font-weight:bold;margin-bottom:10px;",
-                           "padding:8px;border:1px solid #ffeeba;background:#fff3cd;"),
-            sprintf("Background image: %d \u00d7 %d px. ",
-                    bg_dims[2L], bg_dims[1L]),
-            "Verify this matches your display resolution."
-          )
+        if (grepl("\\.(png|jpe?g)$", img_name, ignore.case = TRUE)) {
+          bg_dims  <- NULL
+          if (grepl("\\.png$", img_name, ignore.case = TRUE) &&
+              requireNamespace("png", quietly = TRUE)) {
+            bg_dims <- dim(png::readPNG(img_path))[1:2]
+          } else if (grepl("\\.jpe?g$", img_name, ignore.case = TRUE) &&
+                     requireNamespace("jpeg", quietly = TRUE)) {
+            bg_dims <- dim(jpeg::readJPEG(img_path))[1:2]
+          }
+          if (!is.null(bg_dims)) {
+            msgs[[length(msgs) + 1L]] <- shiny::div(
+              style = paste0("color:#856404;font-weight:bold;margin-bottom:10px;",
+                             "padding:8px;border:1px solid #ffeeba;background:#fff3cd;"),
+              sprintf("Background image: %d \u00d7 %d px. ",
+                      bg_dims[2L], bg_dims[1L]),
+              "Verify this matches your display resolution."
+            )
+          }
         }
       }
       if (length(msgs) > 0L) do.call(shiny::tagList, msgs) else NULL
@@ -391,9 +491,6 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
         )
 
       # Background image (encoded as base64 for plotly)
-      # The image is sized to match the full display resolution. When the
-      # image dimensions can be read, those are used; otherwise the common
-      # 1920 × 1080 default is applied.
       bg_layout_images <- NULL
       if (!is.null(input$bg_image) &&
           requireNamespace("base64enc", quietly = TRUE)) {
@@ -406,9 +503,8 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
           } else {
             "image/jpeg"
           }
-          # Determine image pixel dimensions for correct coordinate mapping
-          bg_w <- 1920L  # default display width
-          bg_h <- 1080L  # default display height
+          bg_w <- 1920L
+          bg_h <- 1080L
           if (grepl("\\.png$", img_name, ignore.case = TRUE) &&
               requireNamespace("png", quietly = TRUE)) {
             dims <- dim(png::readPNG(img_path))
@@ -436,12 +532,7 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
       # Word region rectangles / boundary lines
       if (input$show_word_regions && !is.null(wb) && nrow(wb) > 0L) {
         if (has_full_roi) {
-          # Build tooltip text outside aes() to keep the mapping readable
-          wb_text <- if (has_words) {
-            paste0("Word: ", wb$word)
-          } else {
-            paste0("Region: ", wb$word_id)
-          }
+          wb_text <- if (has_words) paste0("Word: ", wb$word) else paste0("Region: ", wb$word_id)
           wb_plot <- dplyr::mutate(wb, .wb_tip = wb_text)
           p <- p + ggplot2::geom_rect(
             data = wb_plot,
@@ -450,108 +541,66 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
               ymin = .data$y_start, ymax = .data$y_end,
               text = .data$.wb_tip
             ),
-            fill      = "steelblue",
-            alpha     = 0.07,
-            color     = "steelblue",
-            linewidth = 0.3
+            fill = "steelblue", alpha = 0.07, color = "steelblue", linewidth = 0.3
           )
         } else if (has_x_end) {
           p <- p + ggplot2::geom_vline(
-            data     = wb,
-            ggplot2::aes(xintercept = .data$x_end),
-            linetype = "dashed",
-            color    = "grey50",
-            alpha    = 0.7
+            data = wb, ggplot2::aes(xintercept = .data$x_end),
+            linetype = "dashed", color = "grey50", alpha = 0.7
           )
         }
       }
 
       # Word text labels
       if (input$show_word_labels && has_words) {
-        label_x <- if (has_full_roi && "x_start" %in% names(wb)) {
-          (wb$x_start + wb$x_end) / 2
-        } else if (has_x_end) {
-          wb$x_end - 20
-        } else {
-          rep(0, nrow(wb))
-        }
-        label_y <- if (has_full_roi) {
-          (wb$y_start + wb$y_end) / 2
-        } else {
-          rep(y_median, nrow(wb))
-        }
+        label_x <- if (has_full_roi && "x_start" %in% names(wb)) (wb$x_start + wb$x_end) / 2 else if (has_x_end) wb$x_end - 20 else rep(0, nrow(wb))
+        label_y <- if (has_full_roi) (wb$y_start + wb$y_end) / 2 else rep(y_median, nrow(wb))
         label_df <- dplyr::tibble(x = label_x, y = label_y, label = wb$word)
         p <- p + ggplot2::geom_text(
-          data = label_df,
-          ggplot2::aes(x = .data$x, y = .data$y, label = .data$label),
-          vjust = 0.5,
-          size  = 3.5,
-          color = "grey20"
+          data = label_df, ggplot2::aes(x = .data$x, y = .data$y, label = .data$label),
+          vjust = 0.5, size = 3.5, color = "grey20"
         )
       }
 
       # FFD / GD / TVT bar overlays
       if (input$show_measures) {
         wm <- word_measures()
-        if (!is.null(wm) && nrow(wm) > 0L && !is.null(wb) &&
-            "word_id" %in% names(wb) && has_full_roi) {
-          m_df <- dplyr::left_join(
-            wb,
-            wm[, intersect(names(wm), c("word_id", "ffd", "gd", "tvt"))],
-            by = "word_id"
-          )
-          m_df <- m_df[(!is.na(m_df$ffd) | !is.na(m_df$gd) |
-                          !is.na(m_df$tvt)), , drop = FALSE]
+        if (!is.null(wm) && nrow(wm) > 0L && !is.null(wb) && "word_id" %in% names(wb) && has_full_roi) {
+          m_df <- dplyr::left_join(wb, wm[, intersect(names(wm), c("word_id", "ffd", "gd", "tvt"))], by = "word_id")
+          m_df <- m_df[(!is.na(m_df$ffd) | !is.na(m_df$gd) | !is.na(m_df$tvt)), , drop = FALSE]
           if (nrow(m_df) > 0L) {
-            # bar_scale: pixels of bar height per millisecond of fixation time
             bar_scale <- 0.5
-
             if (any(!is.na(m_df$ffd))) {
               ffd_df <- m_df[!is.na(m_df$ffd), , drop = FALSE]
               bw_f   <- (ffd_df$x_end - ffd_df$x_start) * 0.25
-              gap_f  <- bw_f * 0.08
               p <- p + ggplot2::geom_rect(
-                data = ffd_df,
-                ggplot2::aes(
-                  xmin = .data$x_start + gap_f,
-                  xmax = .data$x_start + bw_f,
-                  ymin = .data$y_start - .data$ffd * bar_scale,
-                  ymax = .data$y_start,
+                data = ffd_df, ggplot2::aes(
+                  xmin = .data$x_start + bw_f * 0.08, xmax = .data$x_start + bw_f,
+                  ymin = .data$y_start - .data$ffd * bar_scale, ymax = .data$y_start,
                   text = paste0("FFD: ", round(.data$ffd), " ms")
-                ),
-                fill = "#2ecc71", alpha = 0.6, color = "#27ae60", linewidth = 0.3
+                ), fill = "#2ecc71", alpha = 0.6, color = "#27ae60", linewidth = 0.3
               )
             }
             if (any(!is.na(m_df$gd))) {
-              gd_df  <- m_df[!is.na(m_df$gd), , drop = FALSE]
-              bw_g   <- (gd_df$x_end - gd_df$x_start) * 0.25
-              gap_g  <- bw_g * 0.08
+              gd_df <- m_df[!is.na(m_df$gd), , drop = FALSE]
+              bw_g  <- (gd_df$x_end - gd_df$x_start) * 0.25
               p <- p + ggplot2::geom_rect(
-                data = gd_df,
-                ggplot2::aes(
-                  xmin = .data$x_start + bw_g + gap_g * 2,
-                  xmax = .data$x_start + bw_g * 2 + gap_g,
-                  ymin = .data$y_start - .data$gd * bar_scale,
-                  ymax = .data$y_start,
+                data = gd_df, ggplot2::aes(
+                  xmin = .data$x_start + bw_g + (bw_g * 0.08) * 2, xmax = .data$x_start + bw_g * 2 + (bw_g * 0.08),
+                  ymin = .data$y_start - .data$gd * bar_scale, ymax = .data$y_start,
                   text = paste0("GD: ", round(.data$gd), " ms")
-                ),
-                fill = "#9b59b6", alpha = 0.6, color = "#8e44ad", linewidth = 0.3
+                ), fill = "#9b59b6", alpha = 0.6, color = "#8e44ad", linewidth = 0.3
               )
             }
             if (any(!is.na(m_df$tvt))) {
               tvt_df <- m_df[!is.na(m_df$tvt), , drop = FALSE]
               bw_t   <- (tvt_df$x_end - tvt_df$x_start) * 0.25
-              gap_t  <- bw_t * 0.08
               p <- p + ggplot2::geom_rect(
-                data = tvt_df,
-                ggplot2::aes(
-                  xmin = .data$x_start + bw_t * 2 + gap_t * 3,
-                  xmax = .data$x_start + bw_t * 3 + gap_t * 2,
-                  ymin = .data$y_start - .data$tvt * bar_scale,
-                  ymax = .data$y_start,
+                data = tvt_df, ggplot2::aes(
+                  xmin = .data$x_start + bw_t * 2 + (bw_t * 0.08) * 3, xmax = .data$x_start + bw_t * 3 + (bw_t * 0.08) * 2,
+                  ymin = .data$y_start - .data$tvt * bar_scale, ymax = .data$y_start,
                   text = paste0("TVT: ", round(.data$tvt), " ms")
-                ),
-                fill = "#3498db", alpha = 0.6, color = "#2980b9", linewidth = 0.3
+                ), fill = "#3498db", alpha = 0.6, color = "#2980b9", linewidth = 0.3
               )
             }
           }
@@ -561,150 +610,55 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
       # Raw gaze samples
       if (input$show_samples && nrow(samp) > 0L) {
         p <- p + ggplot2::geom_point(
-          data = samp,
-          ggplot2::aes(
-            x    = .data$x,
-            y    = .data$y,
-            text = paste0(
-              "t: ", round(.data$time_rel), " ms\n",
-              "X: ", round(.data$x), "\n",
-              "Y: ", round(.data$y)
-            )
-          ),
-          color = "grey40",
-          size  = 0.5,
-          alpha = 0.5
+          data = samp, ggplot2::aes(x = .data$x, y = .data$y, text = paste0("t: ", round(.data$time_rel), " ms\nX: ", round(.data$x), "\nY: ", round(.data$y))),
+          color = "grey40", size = 0.5, alpha = 0.5
         )
       }
 
       # Fixation path + circles
       if (input$show_fixations && !is.null(fix) && nrow(fix) > 0L) {
-        p <- p +
-          ggplot2::geom_path(
-            data = fix,
-            ggplot2::aes(x = .data$avg_x, y = .data$avg_y),
-            color    = "red",
-            linetype = "dashed",
-            alpha    = 0.5
-          ) +
-          ggplot2::geom_point(
-            data = fix,
-            ggplot2::aes(
-              x    = .data$avg_x,
-              y    = .data$avg_y,
-              size = .data$duration,
-              text = paste0(
-                "Fix #", .data$fixation_nr, "\n",
-                "Dur: ", round(.data$duration), " ms\n",
-                "Start: ", round(.data$time_rel_start), " ms\n",
-                "X: ", round(.data$avg_x), "\n",
-                "Y: ", round(.data$avg_y)
-              )
-            ),
-            color = "red",
-            alpha = 0.65
-          ) +
+        p <- p + ggplot2::geom_path(data = fix, ggplot2::aes(x = .data$avg_x, y = .data$avg_y), color = "red", linetype = "dashed", alpha = 0.5) +
+          ggplot2::geom_point(data = fix, ggplot2::aes(x = .data$avg_x, y = .data$avg_y, size = .data$duration, text = paste0("Fix #", .data$fixation_nr, "\nDur: ", round(.data$duration), " ms\nStart: ", round(.data$time_rel_start), " ms\nX: ", round(.data$avg_x), "\nY: ", round(.data$avg_y))), color = "red", alpha = 0.65) +
           ggplot2::scale_size_continuous(name = "Duration (ms)", range = c(2, 12))
       }
 
       # --- convert to plotly -------------------------------------------------
       plt <- suppressWarnings(
         plotly::ggplotly(p, tooltip = "text") |>
-          plotly::layout(
-            yaxis = list(autorange = "reversed"),
-            images = bg_layout_images
-          ) |>
+          plotly::layout(yaxis = list(autorange = "reversed"), images = bg_layout_images) |>
           plotly::config(displayModeBar = TRUE, displaylogo = FALSE)
       )
       plt
     })
 
-    # -- fixation data table --------------------------------------------------
+    # -- data tables ----------------------------------------------------------
     output$fixation_dt <- DT::renderDT(server = FALSE, {
       shiny::req(input$show_fixation_table)
       fix <- trial_fixations()
-      if (is.null(fix) || nrow(fix) == 0L) {
-        return(DT::datatable(
-          dplyr::tibble(message = "No fixations found for this trial/eye."),
-          rownames = FALSE
-        ))
-      }
-      cols <- c("fixation_nr", "avg_x", "avg_y", "duration",
-                "start_time", "end_time", "time_rel_start")
-      cols <- intersect(cols, names(fix))
-      tbl  <- fix[, cols, drop = FALSE]
-      tbl  <- dplyr::mutate(tbl, dplyr::across(
-        dplyr::where(is.numeric), ~ round(.x, 1L)
-      ))
-      DT::datatable(
-        tbl,
-        rownames = FALSE,
-        options  = list(pageLength = 20L, scrollX = TRUE),
-        class    = "compact stripe hover"
-      )
+      if (is.null(fix) || nrow(fix) == 0L) return(DT::datatable(dplyr::tibble(message = "No fixations found."), rownames = FALSE))
+      tbl <- dplyr::mutate(fix[, intersect(c("fixation_nr", "avg_x", "avg_y", "duration", "start_time", "end_time", "time_rel_start"), names(fix))], dplyr::across(dplyr::where(is.numeric), ~ round(.x, 1L)))
+      DT::datatable(tbl, rownames = FALSE, options = list(pageLength = 20L, scrollX = TRUE), class = "compact stripe hover")
     })
 
-    # -- word measures table --------------------------------------------------
     output$word_dt <- DT::renderDT(server = FALSE, {
       shiny::req(input$show_word_table)
       wm <- word_measures()
-      if (is.null(wm) || nrow(wm) == 0L) {
-        wb <- trial_wb()
-        msg <- if (is.null(wb) || nrow(wb) == 0L) {
-          "No word boundary data available for this trial."
-        } else if (!all(c("x_start", "x_end", "y_start", "y_end") %in% names(wb))) {
-          "Word boundaries lack full ROI columns (x_start/x_end/y_start/y_end)."
-        } else {
-          "No fixations found; cannot compute word measures."
-        }
-        return(DT::datatable(
-          dplyr::tibble(message = msg),
-          rownames = FALSE
-        ))
-      }
-      cols <- intersect(
-        c("word_id", "word", "ffd", "gd", "gpt", "tvt", "n_fixations"),
-        names(wm)
-      )
-      tbl <- wm[, cols, drop = FALSE]
-      tbl <- dplyr::mutate(tbl, dplyr::across(
-        dplyr::where(is.numeric), ~ round(.x, 1L)
-      ))
-      DT::datatable(
-        tbl,
-        rownames = FALSE,
-        options  = list(pageLength = 25L, scrollX = TRUE),
-        class    = "compact stripe hover"
-      )
+      if (is.null(wm) || nrow(wm) == 0L) return(DT::datatable(dplyr::tibble(message = "No word measures."), rownames = FALSE))
+      tbl <- dplyr::mutate(wm[, intersect(c("word_id", "word", "ffd", "gd", "gpt", "tvt", "n_fixations"), names(wm))], dplyr::across(dplyr::where(is.numeric), ~ round(.x, 1L)))
+      DT::datatable(tbl, rownames = FALSE, options = list(pageLength = 25L, scrollX = TRUE), class = "compact stripe hover")
     })
 
-    # -- raw samples table ----------------------------------------------------
     output$sample_dt <- DT::renderDT(server = FALSE, {
       shiny::req(input$show_sample_table)
       samp <- trial_samples()
-      if (nrow(samp) == 0L) {
-        return(DT::datatable(
-          dplyr::tibble(message = "No samples found for this trial/eye."),
-          rownames = FALSE
-        ))
-      }
-      cols <- intersect(c("time", "time_rel", "x", "y"), names(samp))
-      tbl  <- samp[, cols, drop = FALSE]
-      tbl  <- dplyr::mutate(tbl, dplyr::across(
-        dplyr::where(is.numeric), ~ round(.x, 1L)
-      ))
-      DT::datatable(
-        tbl,
-        rownames = FALSE,
-        options  = list(pageLength = 25L, scrollX = TRUE),
-        class    = "compact stripe hover"
-      )
+      if (nrow(samp) == 0L) return(DT::datatable(dplyr::tibble(message = "No samples."), rownames = FALSE))
+      tbl <- dplyr::mutate(samp[, intersect(c("time", "time_rel", "x", "y"), names(samp))], dplyr::across(dplyr::where(is.numeric), ~ round(.x, 1L)))
+      DT::datatable(tbl, rownames = FALSE, options = list(pageLength = 25L, scrollX = TRUE), class = "compact stripe hover")
     })
   }
 
   # ---- launch app -----------------------------------------------------------
-  app <- shiny::shinyApp(ui, server,
-                         options = list(launch.browser = launch.browser))
+  app <- shiny::shinyApp(ui, server, options = list(launch.browser = launch.browser))
   shiny::runApp(app)
   invisible(app)
 }
@@ -714,15 +668,59 @@ plot_trials_shiny <- function(asc_result, roi = NULL, launch.browser = TRUE) {
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-#' Extract the vector of trial_nr values from an asc_result list
+#' Extract unique trials and sentences to build choices for shiny dropdown
+#' @return A list with 'trial_choices', 'sentence_choices', and 'mapping'
 #' @noRd
-.shiny_trial_nrs <- function(asc_result) {
-  if (!is.null(asc_result$trial_db) && "trial_nr" %in% names(asc_result$trial_db)) {
-    return(asc_result$trial_db$trial_nr)
+.shiny_trial_choices <- function(samples, fixations, rois, measures, trial_db) {
+  dfs <- list(trial_db, measures, rois, fixations, samples)
+  dfs <- dfs[!vapply(dfs, is.null, logical(1))]
+  
+  for (df in dfs) {
+    t_col <- if ("trial_nr" %in% names(df)) "trial_nr" else if ("trial" %in% names(df)) "trial" else NULL
+    if (!is.null(t_col)) {
+      mapping_cols <- intersect(c(t_col, "sentence_nr"), names(df))
+      mapping <- unique(df[, mapping_cols, drop = FALSE])
+      if (t_col != "trial_nr") names(mapping)[names(mapping) == t_col] <- "trial_nr"
+      mapping <- mapping[order(mapping$trial_nr), , drop = FALSE]
+      
+      choices <- mapping$trial_nr
+      if ("sentence_nr" %in% names(mapping)) {
+        names(choices) <- ifelse(is.na(mapping$sentence_nr), paste0("Trial ", mapping$trial_nr), paste0("Trial ", mapping$trial_nr, " (Sentence ", mapping$sentence_nr, ")"))
+      } else {
+        names(choices) <- paste0("Trial ", mapping$trial_nr)
+      }
+      
+      sent_choices <- NULL
+      if ("sentence_nr" %in% names(mapping)) {
+        sents <- sort(unique(mapping$sentence_nr[!is.na(mapping$sentence_nr)]))
+        if (length(sents) > 0) {
+          sent_choices <- as.character(sents)
+          names(sent_choices) <- paste0("Sentence ", sents)
+        }
+      }
+      
+      return(list(trial_choices = choices, sentence_choices = sent_choices, mapping = mapping))
+    }
   }
-  if ("trial_nr" %in% names(asc_result$samples)) {
-    return(sort(unique(asc_result$samples$trial_nr)))
+  list(trial_choices = stats::setNames(0L, "Trial 0"), sentence_choices = NULL, mapping = data.frame(trial_nr = 0L))
+}
+
+#' Check that all passed discrete tables contain the same set of trials
+#' @noRd
+.check_trial_mismatch <- function(...) {
+  dfs <- list(...)
+  dfs <- dfs[!vapply(dfs, is.null, logical(1))]
+  if (length(dfs) <= 1L) return()
+  trial_lists <- lapply(dfs, function(df) {
+    if ("trial_nr" %in% names(df)) sort(unique(df$trial_nr)) else if ("trial" %in% names(df)) sort(unique(df$trial)) else NULL
+  })
+  trial_lists <- trial_lists[!vapply(trial_lists, is.null, logical(1))]
+  if (length(trial_lists) <= 1L) return()
+  first_trials <- trial_lists[[1L]]
+  for (i in seq_along(trial_lists)[-1L]) {
+    if (!identical(trial_lists[[i]], first_trials)) {
+      warning("The provided data frames do not contain the exact same set of trials.")
+      break
+    }
   }
-  # Fallback: single trial numbered 0
-  0L
 }

@@ -42,6 +42,7 @@
 #'   combination that received at least one fixation.  Columns:
 #'   \describe{
 #'     \item{`trial`}{Trial identifier.}
+#'     \item{`sentence_nr`}{Sentence/item identifier (if available in `roi`).}
 #'     \item{`word_id`}{Integer word index.}
 #'     \item{`word`}{Word string (if available and `include_word_col = TRUE`).}
 #'     \item{`ffd`}{First fixation duration (ms); `NA` if not applicable.}
@@ -172,16 +173,19 @@ compute_eye_measures <- function(
 
   out <- dplyr::bind_rows(results)
 
-  # Attach word text if requested
-  if (include_word_col && "word" %in% names(roi)) {
-    word_lookup <- unique(roi[, c(trial_col, "word_id", "word"), drop = FALSE])
+  # Attach word text and sentence_nr if requested/available
+  if ("word" %in% names(roi) || "sentence_nr" %in% names(roi)) {
+    cols_to_join <- intersect(c(trial_col, "word_id", "word", "sentence_nr"), names(roi))
+    word_lookup <- unique(roi[, cols_to_join, drop = FALSE])
     join_by <- c(trial_col, "word_id")
     out <- dplyr::left_join(out, word_lookup, by = join_by)
   }
 
   # Reorder output columns
-  lead_cols    <- c(trial_col, if (has_eye) eye_col, "word_id",
-                   if ("word" %in% names(out)) "word")
+  lead_cols    <- c(trial_col,
+                    if ("sentence_nr" %in% names(out)) "sentence_nr",
+                    if (has_eye) eye_col, "word_id",
+                    if ("word" %in% names(out)) "word")
   measure_cols <- c("ffd", "gd", "gpt", "tvt", "n_fixations")
   col_order    <- c(lead_cols, measure_cols)
   col_order    <- col_order[col_order %in% names(out)]
