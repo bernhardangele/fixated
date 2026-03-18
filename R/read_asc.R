@@ -249,7 +249,8 @@ read_asc <- function(path,
 #' Parse MSG lines from an ASC file into a per-sample metadata table
 #' @noRd
 .parse_asc_messages <- function(lines) {
-  msg_idx <- which(stringr::str_starts(lines, "MSG"))
+  pattern_msg <- "^MSG\\s+\\d{5,10}"
+  msg_idx <- which(stringr::str_detect(lines, pattern_msg))
   if (length(msg_idx) == 0L) {
     return(list())
   }
@@ -276,9 +277,15 @@ read_asc <- function(path,
 #' produce two rows per timestamp, one per eye.
 #' @noRd
 .parse_asc_samples <- function(lines, eyes, trial_meta, is_binocular = FALSE) {
-  # Sample lines start with a digit and are NOT keyword lines
-  sample_pattern <- "^[0-9]"
-  s_idx <- which(stringr::str_detect(lines, sample_pattern))
+  # Use precise EyeLink sample patterns to avoid matching non-sample digit lines.
+  # Binocular: time + 6 decimal fields + 5-char status flags
+  # Monocular: time + 4 decimal fields (x, y, pupil, vel/flags) + 3-char status flags
+  if (is_binocular) {
+    sample_pattern <- "^\\d{5,10}(?:\\s+\\-{0,1}\\d{0,5}\\.{1}\\d{0,1}){6}\\s[\\.ICR]{5}$"
+  } else {
+    sample_pattern <- "^\\d{5,10}(?:\\s+\\-{0,1}\\d{0,5}\\.{1}\\d{0,1}){4}\\s[\\.ICR]{3}$"
+  }
+  s_idx <- which(stringr::str_detect(lines, sample_pattern, negate = FALSE))
   if (length(s_idx) == 0L) {
     return(.empty_samples_tibble())
   }
@@ -286,6 +293,19 @@ read_asc <- function(path,
   raw <- lines[s_idx]
   split_lines <- stringr::str_split(raw, "\\s+")
   n <- length(split_lines)
+
+  # Detect the recorded eye from the first START line (monocular files only)
+  monocular_eye <- "L"  # fallback default
+  if (!is_binocular) {
+    start_idx <- which(stringr::str_starts(lines, "START"))
+    if (length(start_idx) > 0L) {
+      start_line <- lines[[start_idx[[1L]]]]
+      if (stringr::str_detect(start_line, "RIGHT") &&
+          !stringr::str_detect(start_line, "LEFT")) {
+        monocular_eye <- "R"
+      }
+    }
+  }
 
   if (is_binocular) {
     # Binocular format: time | xl | yl | pl | xr | yr | pr [| flags...]
@@ -334,6 +354,15 @@ read_asc <- function(path,
 
     for (i in seq_len(n)) {
       cols <- split_lines[[i]]
+      # Guard: non-sample lines (e.g. "0: response(...)") may have fewer columns
+      if (length(cols) < 4L) {
+        time_vec[[i]]  <- NA_integer_
+        x_vec[[i]]     <- NA_real_
+        y_vec[[i]]     <- NA_real_
+        pupil_vec[[i]] <- NA_real_
+        eye_vec[[i]]   <- monocular_eye
+        next
+      }
       time_vec[[i]]  <- suppressWarnings(as.integer(cols[[1L]]))
       x_val <- suppressWarnings(as.numeric(cols[[2L]]))
       y_val <- suppressWarnings(as.numeric(cols[[3L]]))
@@ -345,7 +374,7 @@ read_asc <- function(path,
       eye_vec[[i]] <- if (length(cols) >= 5L && cols[[5L]] %in% c("L", "R")) {
         cols[[5L]]
       } else {
-        "L" # monocular default
+        monocular_eye  # use eye detected from START header
       }
     }
 
