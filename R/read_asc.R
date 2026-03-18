@@ -228,6 +228,69 @@ read_asc <- function(path,
     word_boundaries <- word_boundaries[, col_order]
   }
 
+  # ---- post-process character boundaries with trial_db metadata ------------
+  if (!is.null(character_boundaries) && !is.null(trial_db)) {
+    cb_processed <- list()
+    unique_trials <- unique(character_boundaries$trial_nr)
+
+    for (tr in unique_trials) {
+      trial_cb <- character_boundaries[character_boundaries$trial_nr == tr, ]
+      trial_info <- trial_db[trial_db$trial_nr == tr, ]
+
+      if (nrow(trial_info) == 0L) {
+        cb_processed[[as.character(tr)]] <- trial_cb
+        next
+      }
+
+      # Get x_start from trial_db or default
+      s_start_x <- if ("os_sentence_start_x" %in% names(trial_info)) {
+        as.numeric(trial_info$os_sentence_start_x[[1L]])
+      } else if ("sentence_start_x" %in% names(trial_info)) {
+        as.numeric(trial_info$sentence_start_x[[1L]])
+      } else {
+        125
+      }
+
+      # Get height from trial_db or default
+      s_height <- if ("os_height" %in% names(trial_info)) {
+        as.numeric(trial_info$os_height[[1L]])
+      } else if ("height" %in% names(trial_info)) {
+        as.numeric(trial_info$height[[1L]])
+      } else {
+        1080
+      }
+
+      # Compute x_start, y_start, y_end
+      # We assume chronological order by char_id (and word_id if present)
+      if ("word_id" %in% names(trial_cb) && !all(is.na(trial_cb$word_id))) {
+        trial_cb <- trial_cb[order(trial_cb$word_id, trial_cb$char_id), ]
+      } else {
+        trial_cb <- trial_cb[order(trial_cb$char_id), ]
+      }
+
+      n_c <- nrow(trial_cb)
+      x_starts <- numeric(n_c)
+      x_starts[1L] <- as.numeric(s_start_x)
+      if (n_c > 1L) {
+        x_starts[2:n_c] <- as.numeric(trial_cb$x_end[1:(n_c - 1L)])
+      }
+
+      trial_cb$x_start <- x_starts
+      trial_cb$y_start <- 0
+      trial_cb$y_end   <- s_height
+
+      cb_processed[[as.character(tr)]] <- trial_cb
+    }
+
+    character_boundaries <- dplyr::bind_rows(cb_processed)
+
+    # Final column ordering
+    desired_cols <- c("trial_nr", "sentence_nr", "word_id", "char_id", "char", "x_start", "x_end", "y_start", "y_end")
+    existing_cols <- names(character_boundaries)
+    col_order <- c(intersect(desired_cols, existing_cols), setdiff(existing_cols, desired_cols))
+    character_boundaries <- character_boundaries[, col_order]
+  }
+
   list(
     samples              = samples,
     events               = events,

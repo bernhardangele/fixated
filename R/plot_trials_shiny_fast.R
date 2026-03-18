@@ -14,6 +14,8 @@
 #' @param fixations A data frame of detected fixations.
 #' @param rois A data frame of word regions of interest. Takes precedence over
 #'   `asc_result$word_boundaries`.
+#' @param chars A data frame of character regions of interest. Takes precedence over
+#'   `asc_result$character_boundaries`.
 #' @param measures A data frame of word measures. If provided, the app will not
 #'   recompute measures internally.
 #' @param roi A data frame of word regions of interest as returned by
@@ -69,7 +71,7 @@
 #' }
 plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
                               fixations = NULL, rois = NULL, measures = NULL,
-                              roi = NULL, trial_db = NULL,
+                              roi = NULL, trial_db = NULL, chars = NULL,
                               launch.browser = TRUE) {
 
   # ---- dependency checks ----------------------------------------------------
@@ -104,6 +106,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
       )
     }
     if (is.null(rois)) rois <- asc_result$word_boundaries
+    if (is.null(chars)) chars <- asc_result$character_boundaries
     if (is.null(trial_db)) trial_db <- asc_result$trial_db
   }
 
@@ -157,6 +160,8 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
                              "Overlay EyeLink fixations", value = TRUE),
         shiny::checkboxInput("show_word_regions",
                              "Show word regions / boundaries", value = TRUE),
+        shiny::checkboxInput("show_char_regions",
+                             "Show character regions / boundaries", value = FALSE),
         shiny::checkboxInput("show_word_labels",
                              "Show word text labels", value = TRUE),
         shiny::checkboxInput("show_measures",
@@ -374,6 +379,22 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
       wb
     })
 
+    # Resolve character boundary ROI data for the current trial
+    trial_cb <- shiny::reactive({
+      tnr <- current_tnr()
+      cb  <- NULL
+      if (!is.null(chars)) {
+        cb <- if ("trial_nr" %in% names(chars)) {
+          dplyr::filter(chars, .data$trial_nr == tnr)
+        } else if ("trial" %in% names(chars)) {
+          dplyr::filter(chars, .data$trial == tnr)
+        } else {
+          chars
+        }
+      }
+      cb
+    })
+
     # Word measures (FFD, GD, TVT) – computed only when needed
     word_measures <- shiny::reactive({
       shiny::req(input$show_measures)
@@ -455,6 +476,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
       samp <- trial_samples()
       fix  <- trial_fixations()
       wb   <- trial_wb()
+      cb   <- trial_cb()
 
       # Optionally apply animation time limit
       if (!is.null(input$time_limit) && "time_rel" %in% names(samp)) {
@@ -561,6 +583,39 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
               x0 = wb$x_end[[i]], x1 = wb$x_end[[i]],
               y0 = 0, y1 = 1, yref = "paper",
               line = list(color = "gray", width = 1, dash = "dash"),
+              layer = "below"
+            )))
+          }
+        }
+      }
+
+      # Character region rectangles / boundary lines
+      if (input$show_char_regions && !is.null(cb) && nrow(cb) > 0L) {
+        has_full_cb <- all(c("x_start", "x_end", "y_start", "y_end") %in% names(cb))
+        has_cb_x_end <- "x_end" %in% names(cb)
+        
+        if (has_full_cb) {
+          for (i in seq_len(nrow(cb))) {
+            cb_text <- if ("char" %in% names(cb)) paste0("Char: ", cb$char[[i]]) else paste0("Char: ", cb$char_id[[i]])
+            shapes <- append(shapes, list(list(
+              type = "rect",
+              x0 = cb$x_start[[i]], x1 = cb$x_end[[i]],
+              y0 = cb$y_start[[i]], y1 = cb$y_end[[i]],
+              fillcolor = "rgba(255, 165, 0, 0.05)",
+              line = list(color = "orange", width = 0.2),
+              layer = "below"
+            )))
+            hover_x <- c(hover_x, (cb$x_start[[i]] + cb$x_end[[i]]) / 2)
+            hover_y <- c(hover_y, (cb$y_start[[i]] + cb$y_end[[i]]) / 2)
+            hover_txt <- c(hover_txt, cb_text)
+          }
+        } else if (has_cb_x_end) {
+          for (i in seq_len(nrow(cb))) {
+            shapes <- append(shapes, list(list(
+              type = "line",
+              x0 = cb$x_end[[i]], x1 = cb$x_end[[i]],
+              y0 = 0, y1 = 1, yref = "paper",
+              line = list(color = "orange", width = 0.5, dash = "dot"),
               layer = "below"
             )))
           }
