@@ -39,6 +39,12 @@
 #'   `eye_tracker = "eyelink_opensesame"`, OpenSesame variable messages of
 #'   the form `MSG … var KEY VALUE` with a single-word value are parsed and
 #'   added as columns to `trial_db`.  Set to `FALSE` to skip this step.
+#' @param char_pattern Character scalar or `NULL`. A regular expression that matches
+#'   character boundary messages. Defaults to
+#'   `"^MSG\\\\t\\\\d+\\\\s+TRIAL\\\\s+(\\\\d+)\\\\s+ITEM\\\\s+(\\\\d+)\\\\s+WORD\\\\s+(\\\\d+)\\\\s+CHAR\\\\s+(\\\\d+)\\\\s+(\\\\S+)\\\\s+(\\\\d+)"`.
+#'   The pattern must contain exactly 5 or 6 capture groups: 6 groups for `trial_nr`,
+#'   `sentence_nr`, `word_id`, `char_id`, `char`, `x_end`; 5 groups for the same but
+#'   omitting `word_id`.
 #'
 #' @return A named list with elements:
 #'   \describe{
@@ -57,6 +63,10 @@
 #'       `y_start`, `y_end`, parsed from `TRIAL … ITEM … WORD …`
 #'       messages written by OpenSesame.  `NULL` when no such messages are
 #'       found.}
+#'     \item{`character_boundaries`}{A [tibble][tibble::tibble] with columns
+#'       `trial_nr`, `sentence_nr`, `word_id`, `char_id`, `char`, `x_end`,
+#'       parsed from character-level ROI messages. `NULL` when no such messages
+#'       are found.}
 #'     \item{`calibration`}{A [tibble][tibble::tibble] with columns `eye`,
 #'       `quality`, `avg_error`, `max_error`, `offset_deg`, `x_offset`,
 #'       `y_offset`, parsed from `!CAL VALIDATION` messages.  `NULL` when
@@ -104,7 +114,8 @@ read_asc <- function(path,
                      eye_tracker          = "eyelink_opensesame",
                      trial_start_pattern  = NULL,
                      trial_end_pattern    = NULL,
-                     parse_vars           = TRUE) {
+                     parse_vars           = TRUE,
+                     char_pattern         = "^MSG\\\\t\\\\d+\\\\s+TRIAL\\\\s+(\\\\d+)\\\\s+ITEM\\\\s+(\\\\d+)\\\\s+WORD\\\\s+(\\\\d+)\\\\s+CHAR\\\\s+(\\\\d+)\\\\s+(\\\\S+)\\\\s+(\\\\d+)") {
   stopifnot(is.character(path), length(path) == 1L, file.exists(path))
   eyes <- match.arg(eyes, c("L", "R"), several.ok = TRUE)
   eye_tracker <- match.arg(eye_tracker, c("eyelink_opensesame", "custom"))
@@ -125,6 +136,9 @@ read_asc <- function(path,
 
   # ---- parse word boundaries (OpenSesame TRIAL/ITEM/WORD messages) ----------
   word_boundaries <- .parse_asc_word_boundaries(lines)
+
+  # ---- parse character boundaries -------------------------------------------
+  character_boundaries <- .parse_asc_character_boundaries(lines, char_pattern)
 
   # ---- parse calibration/validation info ------------------------------------
   calibration <- .parse_asc_calibration(lines)
@@ -215,11 +229,12 @@ read_asc <- function(path,
   }
 
   list(
-    samples         = samples,
-    events          = events,
-    word_boundaries = word_boundaries,
-    calibration     = calibration,
-    trial_db        = trial_db
+    samples              = samples,
+    events               = events,
+    word_boundaries      = word_boundaries,
+    character_boundaries = character_boundaries,
+    calibration          = calibration,
+    trial_db             = trial_db
   )
 }
 
@@ -524,6 +539,45 @@ read_asc <- function(path,
     word            = m[, 5L],
     x_end           = as.integer(m[, 6L])
   )
+}
+
+#' Parse character boundary messages
+#'
+#' @return A tibble with columns `trial_nr`, `sentence_nr`, `word_id`, `char_id`,
+#'   `char`, `x_end`, or `NULL` when no such messages are present.
+#' @noRd
+.parse_asc_character_boundaries <- function(lines, pattern) {
+  if (is.null(pattern) || nchar(pattern) == 0L) return(NULL)
+
+  cb_idx <- which(stringr::str_detect(lines, pattern))
+  if (length(cb_idx) == 0L) return(NULL)
+
+  m <- stringr::str_match(lines[cb_idx], pattern)
+  n_groups <- ncol(m) - 1L
+
+  if (n_groups == 6L) {
+    dplyr::tibble(
+      trial_nr        = as.integer(m[, 2L]),
+      sentence_nr     = as.integer(m[, 3L]),
+      word_id         = as.integer(m[, 4L]),
+      char_id         = as.integer(m[, 5L]),
+      char            = m[, 6L],
+      x_end           = as.numeric(m[, 7L])
+    )
+  } else if (n_groups == 5L) {
+    # Typically occurs when word_id is missing
+    dplyr::tibble(
+      trial_nr        = as.integer(m[, 2L]),
+      sentence_nr     = as.integer(m[, 3L]),
+      word_id         = NA_integer_,
+      char_id         = as.integer(m[, 4L]),
+      char            = m[, 5L],
+      x_end           = as.numeric(m[, 6L])
+    )
+  } else {
+    warning("char_pattern produced ", n_groups, " capture groups, expected 5 or 6.")
+    NULL
+  }
 }
 
 #' Parse calibration/validation summary messages

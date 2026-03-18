@@ -11,7 +11,9 @@ read_asc(
   eye_tracker = "eyelink_opensesame",
   trial_start_pattern = NULL,
   trial_end_pattern = NULL,
-  parse_vars = TRUE
+  parse_vars = TRUE,
+  char_pattern =
+    "^MSG\\\\\\\\t\\\\\\\\d+\\\\\\\\s+TRIAL\\\\\\\\s+(\\\\\\\\d+)\\\\\\\\s+ITEM\\\\\\\\s+(\\\\\\\\d+)\\\\\\\\s+WORD\\\\\\\\s+(\\\\\\\\d+)\\\\\\\\s+CHAR\\\\\\\\s+(\\\\\\\\d+)\\\\\\\\s+(\\\\\\\\S+)\\\\\\\\s+(\\\\\\\\d+)"
 )
 }
 \arguments{
@@ -46,6 +48,13 @@ non-\code{NULL}, overrides the default for \code{eye_tracker}.}
 \code{eye_tracker = "eyelink_opensesame"}, OpenSesame variable messages of
 the form \verb{MSG … var KEY VALUE} with a single-word value are parsed and
 added as columns to \code{trial_db}.  Set to \code{FALSE} to skip this step.}
+
+\item{char_pattern}{Character scalar or \code{NULL}. A regular expression that matches
+character boundary messages. Defaults to
+\code{"^MSG\\\\\\\\t\\\\\\\\d+\\\\\\\\s+TRIAL\\\\\\\\s+(\\\\\\\\d+)\\\\\\\\s+ITEM\\\\\\\\s+(\\\\\\\\d+)\\\\\\\\s+WORD\\\\\\\\s+(\\\\\\\\d+)\\\\\\\\s+CHAR\\\\\\\\s+(\\\\\\\\d+)\\\\\\\\s+(\\\\\\\\S+)\\\\\\\\s+(\\\\\\\\d+)"}.
+The pattern must contain exactly 5 or 6 capture groups: 6 groups for \code{trial_nr},
+\code{sentence_nr}, \code{word_id}, \code{char_id}, \code{char}, \code{x_end}; 5 groups for the same but
+omitting \code{word_id}.}
 }
 \value{
 A named list with elements:
@@ -65,6 +74,10 @@ included.}
 \code{y_start}, \code{y_end}, parsed from \verb{TRIAL … ITEM … WORD …}
 messages written by OpenSesame.  \code{NULL} when no such messages are
 found.}
+\item{\code{character_boundaries}}{A \link[tibble:tibble]{tibble} with columns
+\code{trial_nr}, \code{sentence_nr}, \code{word_id}, \code{char_id}, \code{char}, \code{x_end},
+parsed from character-level ROI messages. \code{NULL} when no such messages
+are found.}
 \item{\code{calibration}}{A \link[tibble:tibble]{tibble} with columns \code{eye},
 \code{quality}, \code{avg_error}, \code{max_error}, \code{offset_deg}, \code{x_offset},
 \code{y_offset}, parsed from \verb{!CAL VALIDATION} messages.  \code{NULL} when
