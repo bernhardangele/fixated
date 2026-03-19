@@ -44,6 +44,9 @@ filter_asc <- function(asc_result, ...) {
   })))
 
   for (name in names(asc_result)) {
+    # Skip elements that don't have trial-level data, like calibration
+    if (name == "calibration") next
+    
     el <- asc_result[[name]]
     if (is.data.frame(el)) {
       # We only check columns that are NOT functions or objects in the caller env.
