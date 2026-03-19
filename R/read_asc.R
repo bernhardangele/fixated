@@ -122,6 +122,9 @@ read_asc <- function(path,
   eye_tracker <- match.arg(eye_tracker, c("eyelink_opensesame", "custom"))
 
   lines <- readLines(path, encoding = encoding, warn = FALSE)
+  
+  # Ensure valid UTF-8 by sanitizing any invalid bytes
+  lines <- iconv(lines, from = "UTF-8", to = "UTF-8", sub = "byte")
 
   # ---- detect binocular recording format -----------------------------------
   is_binocular <- .detect_asc_binocular(lines)
@@ -600,7 +603,7 @@ read_asc <- function(path,
     trial_nr        = as.integer(m[, 2L]),
     sentence_nr     = as.integer(m[, 3L]),
     word_id         = as.integer(m[, 4L]),
-    word            = iconv(m[, 5L], to = "UTF-8", sub = "byte"),
+    word            = m[, 5L],
     x_end           = as.integer(m[, 6L])
   )
 }
@@ -625,7 +628,7 @@ read_asc <- function(path,
       sentence_nr     = as.integer(m[, 3L]),
       word_id         = as.integer(m[, 4L]),
       char_id         = as.integer(m[, 5L]),
-      char            = iconv(m[, 6L], to = "UTF-8", sub = "byte"),
+      char            = m[, 6L],
       x_end           = as.numeric(m[, 7L])
     )
   } else if (n_groups == 5L) {
@@ -635,7 +638,7 @@ read_asc <- function(path,
       sentence_nr     = as.integer(m[, 3L]),
       word_id         = NA_integer_,
       char_id         = as.integer(m[, 4L]),
-      char            = iconv(m[, 5L], to = "UTF-8", sub = "byte"),
+      char            = m[, 5L],
       x_end           = as.numeric(m[, 6L])
     )
   } else {
