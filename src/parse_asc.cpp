@@ -79,25 +79,35 @@ List parse_asc_cpp(std::string path) {
 
         // [A] SAMPLE LINES
         if (isdigit(ptr[0])) {
-            int t = parse_eye_int(ptr);
-            double x1 = parse_eye_val(ptr);
-            double y1 = parse_eye_val(ptr);
-            double p1 = parse_eye_val(ptr);
+            // Verify it's a real sample (timestamp followed by space/tab/end)
+            // to avoid misparsing log lines like "0: response(...)"
+            const char* check_ptr = ptr;
+            parse_eye_int(check_ptr);
 
-            if (is_binocular) {
-                double x2 = parse_eye_val(ptr);
-                double y2 = parse_eye_val(ptr);
-                double p2 = parse_eye_val(ptr);
+            if (*check_ptr == ' ' || *check_ptr == '\t' || *check_ptr == '\0') {
+                int t = parse_eye_int(ptr);
+                double x1 = parse_eye_val(ptr);
+                double y1 = parse_eye_val(ptr);
+                double p1 = parse_eye_val(ptr);
 
-                // Left Eye Row
-                s_time.push_back(t); s_x.push_back(x1); s_y.push_back(y1);
-                s_pupil.push_back(p1); s_eye.push_back("L");
-                // Right Eye Row
-                s_time.push_back(t); s_x.push_back(x2); s_y.push_back(y2);
-                s_pupil.push_back(p2); s_eye.push_back("R");
+                if (is_binocular) {
+                    double x2 = parse_eye_val(ptr);
+                    double y2 = parse_eye_val(ptr);
+                    double p2 = parse_eye_val(ptr);
+
+                    // Left Eye Row
+                    s_time.push_back(t); s_x.push_back(x1); s_y.push_back(y1);
+                    s_pupil.push_back(p1); s_eye.push_back("L");
+                    // Right Eye Row
+                    s_time.push_back(t); s_x.push_back(x2); s_y.push_back(y2);
+                    s_pupil.push_back(p2); s_eye.push_back("R");
+                } else {
+                    s_time.push_back(t); s_x.push_back(x1); s_y.push_back(y1);
+                    s_pupil.push_back(p1); s_eye.push_back(monocular_eye);
+                }
             } else {
-                s_time.push_back(t); s_x.push_back(x1); s_y.push_back(y1);
-                s_pupil.push_back(p1); s_eye.push_back(monocular_eye);
+                // Not a sample, treat as metadata
+                meta_lines.push_back(line);
             }
         }
 
