@@ -115,12 +115,13 @@ read_asc <- function(path,
                      trial_start_pattern  = NULL,
                      trial_end_pattern    = NULL,
                      parse_vars           = TRUE,
-                     char_pattern         = "^MSG\\\\t\\\\d+\\\\s+TRIAL\\\\s+(\\\\d+)\\\\s+ITEM\\\\s+(\\\\d+)\\\\s+WORD\\\\s+(\\\\d+)\\\\s+CHAR\\\\s+(\\\\d+)\\\\s+(\\\\S+)\\\\s+(\\\\d+)") {
+                     char_pattern         = "^MSG\\t\\d+\\s+TRIAL\\s+(\\d+)\\s+ITEM\\s+(\\d+)\\s+WORD\\s+(\\d+)\\s+CHAR\\s+(\\d+)\\s+(\\S+)\\s+(\\d+)",
+                     encoding             = "UTF-8") {
   stopifnot(is.character(path), length(path) == 1L, file.exists(path))
   eyes <- match.arg(eyes, c("L", "R"), several.ok = TRUE)
   eye_tracker <- match.arg(eye_tracker, c("eyelink_opensesame", "custom"))
 
-  lines <- readLines(path, warn = FALSE)
+  lines <- readLines(path, encoding = encoding, warn = FALSE)
 
   # ---- detect binocular recording format -----------------------------------
   is_binocular <- .detect_asc_binocular(lines)
@@ -599,7 +600,7 @@ read_asc <- function(path,
     trial_nr        = as.integer(m[, 2L]),
     sentence_nr     = as.integer(m[, 3L]),
     word_id         = as.integer(m[, 4L]),
-    word            = m[, 5L],
+    word            = iconv(m[, 5L], to = "UTF-8", sub = "byte"),
     x_end           = as.integer(m[, 6L])
   )
 }
@@ -624,7 +625,7 @@ read_asc <- function(path,
       sentence_nr     = as.integer(m[, 3L]),
       word_id         = as.integer(m[, 4L]),
       char_id         = as.integer(m[, 5L]),
-      char            = m[, 6L],
+      char            = iconv(m[, 6L], to = "UTF-8", sub = "byte"),
       x_end           = as.numeric(m[, 7L])
     )
   } else if (n_groups == 5L) {
@@ -634,7 +635,7 @@ read_asc <- function(path,
       sentence_nr     = as.integer(m[, 3L]),
       word_id         = NA_integer_,
       char_id         = as.integer(m[, 4L]),
-      char            = m[, 5L],
+      char            = iconv(m[, 5L], to = "UTF-8", sub = "byte"),
       x_end           = as.numeric(m[, 6L])
     )
   } else {
