@@ -17,5 +17,8 @@
 #'   (`compute_eye_measures()`): first fixation duration (FFD), gaze
 #'   duration (GD), go-past time (GPT), and total viewing time (TVT).
 #'
+#' @useDynLib fixated, .registration = TRUE
+#' @importFrom Rcpp sourceCpp
+#'
 #' @keywords internal
 "_PACKAGE"
