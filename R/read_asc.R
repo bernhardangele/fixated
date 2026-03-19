@@ -82,9 +82,9 @@
 #'   }
 #'
 #' @importFrom dplyr tibble mutate filter bind_rows select rename arrange
-#'   if_else group_by summarise
+#'   if_else group_by summarise as_tibble left_join
 #' @importFrom stringr str_detect str_split str_trim str_extract str_remove
-#'   str_starts str_squish str_match
+#'   str_starts str_match
 #' @importFrom rlang .data
 #'
 #' @export
@@ -121,38 +121,32 @@ read_asc <- function(path,
   eyes <- match.arg(eyes, c("L", "R"), several.ok = TRUE)
   eye_tracker <- match.arg(eye_tracker, c("eyelink_opensesame", "custom"))
 
-  lines <- readLines(path, encoding = encoding, warn = FALSE)
-  
-  # Ensure valid UTF-8 by sanitizing any invalid bytes
-  lines <- iconv(lines, from = "UTF-8", to = "UTF-8", sub = "byte")
+  # ---- 1. Fast C++ Parsing -------------------------------------------------
+  # Reads samples and events at speed, returning meta lines for R to process
+  raw_data <- parse_asc_cpp(path)
 
-  # ---- detect binocular recording format -----------------------------------
-  is_binocular <- .detect_asc_binocular(lines)
+  samples <- dplyr::as_tibble(raw_data$samples)
+  events  <- dplyr::as_tibble(raw_data$events)
+  lines   <- raw_data$meta_lines  # non-data lines (MSG, START, END, etc.)
 
-  # ---- collect trial metadata from MSG lines --------------------------------
-  trial_meta <- .parse_asc_messages(lines)
+  # Filter to requested eyes and sort
+  samples <- dplyr::filter(samples, .data$eye %in% eyes)
+  events  <- dplyr::filter(events, .data$eye %in% eyes)
+  samples <- dplyr::arrange(samples, .data$time, .data$eye)
+  events  <- dplyr::arrange(events, .data$start_time)
 
-  # ---- parse raw samples ----------------------------------------------------
-  samples <- .parse_asc_samples(lines, eyes, trial_meta, is_binocular)
-
-  # ---- parse events (EFIX, ESACC, EBLINK) -----------------------------------
-  events <- .parse_asc_events(lines, eyes, trial_meta)
-
-  # ---- parse word boundaries (OpenSesame TRIAL/ITEM/WORD messages) ----------
-  word_boundaries <- .parse_asc_word_boundaries(lines)
-
-  # ---- parse character boundaries -------------------------------------------
+  # ---- 2. Parse Metadata using Regex on the reduced string vector ----------
+  # word boundaries, character boundaries, calibration
+  word_boundaries      <- .parse_asc_word_boundaries(lines)
   character_boundaries <- .parse_asc_character_boundaries(lines, char_pattern)
+  calibration          <- .parse_asc_calibration(lines)
 
-  # ---- parse calibration/validation info ------------------------------------
-  calibration <- .parse_asc_calibration(lines)
-
-  # ---- resolve trial start/end patterns ------------------------------------
+  # ---- 3. Resolve trial start/end patterns ---------------------------------
   patterns <- .resolve_trial_patterns(eye_tracker,
                                       trial_start_pattern,
                                       trial_end_pattern)
 
-  # ---- parse trial structure -----------------------------------------------
+  # ---- 4. Parse trial structure --------------------------------------------
   trial_db <- NULL
   if (!is.null(patterns$start)) {
     trial_db <- .parse_asc_trial_db(lines,
@@ -309,282 +303,6 @@ read_asc <- function(path,
 # Internal helpers for read_asc()
 # ---------------------------------------------------------------------------
 
-#' Detect whether an ASC file contains binocular recordings
-#'
-#' Looks for a `START` header line that lists both `LEFT` and `RIGHT`.
-#' @noRd
-.detect_asc_binocular <- function(lines) {
-  start_idx <- which(stringr::str_starts(lines, "START"))
-  for (i in start_idx) {
-    if (stringr::str_detect(lines[[i]], "LEFT") &&
-        stringr::str_detect(lines[[i]], "RIGHT")) {
-      return(TRUE)
-    }
-  }
-  FALSE
-}
-
-#' Extract a numeric value from a whitespace-split column vector
-#'
-#' Returns the numeric value of `cols[[idx]]` if `cols` is long enough,
-#' otherwise returns `NA_real_`.  Suppresses coercion warnings so that
-#' EyeLink's missing-data placeholder `"."` silently becomes `NA`.
-#' @noRd
-.asc_col_num <- function(cols, idx) {
-  if (length(cols) >= idx) suppressWarnings(as.numeric(cols[[idx]])) else NA_real_
-}
-
-#' Parse MSG lines from an ASC file into a per-sample metadata table
-#' @noRd
-.parse_asc_messages <- function(lines) {
-  pattern_msg <- "^MSG\\s+\\d{5,10}"
-  msg_idx <- which(stringr::str_detect(lines, pattern_msg))
-  if (length(msg_idx) == 0L) {
-    return(list())
-  }
-
-  # Build a simple mapping: time -> list of key=value pairs
-  meta <- vector("list", length(msg_idx))
-  for (i in seq_along(msg_idx)) {
-    parts <- stringr::str_squish(lines[msg_idx[[i]]])
-    parts <- stringr::str_split(parts, "\\s+")[[1]]
-    # MSG <time> <content...>
-    if (length(parts) < 3L) next
-    time_val <- suppressWarnings(as.integer(parts[[2]]))
-    if (is.na(time_val)) next
-    content <- paste(parts[-(1:2)], collapse = " ")
-    meta[[i]] <- list(time = time_val, content = content)
-  }
-  meta[!vapply(meta, is.null, logical(1))]
-}
-
-#' Parse raw sample lines from an ASC file
-#'
-#' Handles both monocular (4 data columns: time, x, y, pupil) and binocular
-#' (7 data columns: time, xl, yl, pl, xr, yr, pr) formats.  Binocular files
-#' produce two rows per timestamp, one per eye.
-#' @noRd
-.parse_asc_samples <- function(lines, eyes, trial_meta, is_binocular = FALSE) {
-  # Use precise EyeLink sample patterns to avoid matching non-sample digit lines.
-  # Binocular: time + 6 decimal fields + 5-char status flags
-  # Monocular: time + 4 decimal fields (x, y, pupil, vel/flags) + 3-char status flags
-  if (is_binocular) {
-    # Binocular: time + 6 data columns + optional flags
-    sample_pattern <- "^\\d+\\s+[^a-zA-Z]+"
-  } else {
-    # Monocular: time + 4 data columns + optional flags
-    sample_pattern <- "^\\d+\\s+[^a-zA-Z]+"
-  }
-  s_idx <- which(stringr::str_detect(lines, sample_pattern, negate = FALSE))
-  if (length(s_idx) == 0L) {
-    return(.empty_samples_tibble())
-  }
-
-  raw <- lines[s_idx]
-  split_lines <- stringr::str_split(raw, "\\s+")
-  n <- length(split_lines)
-
-  # Detect the recorded eye from the first START line (monocular files only)
-  monocular_eye <- "L"  # fallback default
-  if (!is_binocular) {
-    start_idx <- which(stringr::str_starts(lines, "START"))
-    if (length(start_idx) > 0L) {
-      start_line <- lines[[start_idx[[1L]]]]
-      if (stringr::str_detect(start_line, "RIGHT") &&
-          !stringr::str_detect(start_line, "LEFT")) {
-        monocular_eye <- "R"
-      }
-    }
-  }
-
-  if (is_binocular) {
-    # Binocular format: time | xl | yl | pl | xr | yr | pr [| flags...]
-    # Produces two rows per sample line (one for each eye)
-    time_vec  <- integer(n)
-    xl_vec    <- numeric(n)
-    yl_vec    <- numeric(n)
-    pl_vec    <- numeric(n)
-    xr_vec    <- numeric(n)
-    yr_vec    <- numeric(n)
-    pr_vec    <- numeric(n)
-
-    for (i in seq_len(n)) {
-      cols        <- split_lines[[i]]
-      time_vec[i] <- suppressWarnings(as.integer(cols[[1L]]))
-      xl_vec[i]   <- .asc_col_num(cols, 2L)
-      yl_vec[i]   <- .asc_col_num(cols, 3L)
-      pl_vec[i]   <- .asc_col_num(cols, 4L)
-      xr_vec[i]   <- .asc_col_num(cols, 5L)
-      yr_vec[i]   <- .asc_col_num(cols, 6L)
-      pr_vec[i]   <- .asc_col_num(cols, 7L)
-    }
-
-    left_rows <- dplyr::tibble(
-      time  = time_vec,
-      x     = xl_vec,
-      y     = yl_vec,
-      pupil = pl_vec,
-      eye   = "L"
-    )
-    right_rows <- dplyr::tibble(
-      time  = time_vec,
-      x     = xr_vec,
-      y     = yr_vec,
-      pupil = pr_vec,
-      eye   = "R"
-    )
-    out <- dplyr::bind_rows(left_rows, right_rows)
-  } else {
-    # Monocular format: time | x | y | pupil [| eye]
-    time_vec  <- integer(n)
-    x_vec     <- numeric(n)
-    y_vec     <- numeric(n)
-    pupil_vec <- numeric(n)
-    eye_vec   <- character(n)
-
-    for (i in seq_len(n)) {
-      cols <- split_lines[[i]]
-      # Guard: non-sample lines (e.g. "0: response(...)") may have fewer columns
-      if (length(cols) < 4L) {
-        time_vec[[i]]  <- NA_integer_
-        x_vec[[i]]     <- NA_real_
-        y_vec[[i]]     <- NA_real_
-        pupil_vec[[i]] <- NA_real_
-        eye_vec[[i]]   <- monocular_eye
-        next
-      }
-      time_vec[[i]]  <- suppressWarnings(as.integer(cols[[1L]]))
-      x_val <- suppressWarnings(as.numeric(cols[[2L]]))
-      y_val <- suppressWarnings(as.numeric(cols[[3L]]))
-      p_val <- suppressWarnings(as.numeric(cols[[4L]]))
-      x_vec[[i]]     <- if (is.na(x_val)) NA_real_ else x_val
-      y_vec[[i]]     <- if (is.na(y_val)) NA_real_ else y_val
-      pupil_vec[[i]] <- if (is.na(p_val)) NA_real_ else p_val
-      # Optional 5th column with eye label (some EyeLink formats)
-      eye_vec[[i]] <- if (length(cols) >= 5L && cols[[5L]] %in% c("L", "R")) {
-        cols[[5L]]
-      } else {
-        monocular_eye  # use eye detected from START header
-      }
-    }
-
-    out <- dplyr::tibble(
-      time  = time_vec,
-      x     = x_vec,
-      y     = y_vec,
-      pupil = pupil_vec,
-      eye   = eye_vec
-    )
-  }
-
-  out <- dplyr::filter(out, .data$eye %in% eyes, !is.na(.data$time))
-  out <- dplyr::arrange(out, .data$time, .data$eye)
-  out
-}
-
-#' Parse event lines (EFIX, ESACC, EBLINK) from an ASC file
-#' @noRd
-.parse_asc_events <- function(lines, eyes, trial_meta) {
-  fix_idx   <- which(stringr::str_starts(lines, "EFIX"))
-  sacc_idx  <- which(stringr::str_starts(lines, "ESACC"))
-  blink_idx <- which(stringr::str_starts(lines, "EBLINK"))
-
-  fix_rows   <- .parse_efix_lines(lines[fix_idx])
-  sacc_rows  <- .parse_esacc_lines(lines[sacc_idx])
-  blink_rows <- .parse_eblink_lines(lines[blink_idx])
-
-  out <- dplyr::bind_rows(fix_rows, sacc_rows, blink_rows)
-  if (nrow(out) == 0L) return(.empty_events_tibble())
-
-  out <- dplyr::filter(out, .data$eye %in% eyes)
-  out <- dplyr::arrange(out, .data$start_time)
-  out
-}
-
-#' Parse EFIX lines
-#' Format: EFIX <eye> <start> <end> <duration> <avg_x> <avg_y> <avg_pupil>
-#' @noRd
-.parse_efix_lines <- function(lines) {
-  if (length(lines) == 0L) return(.empty_events_tibble())
-  split_lines <- stringr::str_split(stringr::str_squish(lines), "\\s+")
-  rows <- lapply(split_lines, function(cols) {
-    if (length(cols) < 8L) return(NULL)
-    list(
-      type       = "FIXATION",
-      eye        = cols[[2]],
-      start_time = suppressWarnings(as.integer(cols[[3]])),
-      end_time   = suppressWarnings(as.integer(cols[[4]])),
-      duration   = suppressWarnings(as.integer(cols[[5]])),
-      x_start    = NA_real_,
-      y_start    = NA_real_,
-      x_end      = NA_real_,
-      y_end      = NA_real_,
-      avg_x      = suppressWarnings(as.numeric(cols[[6]])),
-      avg_y      = suppressWarnings(as.numeric(cols[[7]])),
-      avg_pupil  = suppressWarnings(as.numeric(cols[[8]]))
-    )
-  })
-  rows <- rows[!vapply(rows, is.null, logical(1))]
-  if (length(rows) == 0L) return(.empty_events_tibble())
-  dplyr::bind_rows(rows)
-}
-
-#' Parse ESACC lines
-#' Format: ESACC <eye> <start> <end> <duration> <x1> <y1> <x2> <y2> <ampl> <pvel>
-#' @noRd
-.parse_esacc_lines <- function(lines) {
-  if (length(lines) == 0L) return(.empty_events_tibble())
-  split_lines <- stringr::str_split(stringr::str_squish(lines), "\\s+")
-  rows <- lapply(split_lines, function(cols) {
-    if (length(cols) < 10L) return(NULL)
-    list(
-      type       = "SACCADE",
-      eye        = cols[[2]],
-      start_time = suppressWarnings(as.integer(cols[[3]])),
-      end_time   = suppressWarnings(as.integer(cols[[4]])),
-      duration   = suppressWarnings(as.integer(cols[[5]])),
-      x_start    = suppressWarnings(as.numeric(cols[[6]])),
-      y_start    = suppressWarnings(as.numeric(cols[[7]])),
-      x_end      = suppressWarnings(as.numeric(cols[[8]])),
-      y_end      = suppressWarnings(as.numeric(cols[[9]])),
-      avg_x      = NA_real_,
-      avg_y      = NA_real_,
-      avg_pupil  = NA_real_
-    )
-  })
-  rows <- rows[!vapply(rows, is.null, logical(1))]
-  if (length(rows) == 0L) return(.empty_events_tibble())
-  dplyr::bind_rows(rows)
-}
-
-#' Parse EBLINK lines
-#' Format: EBLINK <eye> <start> <end> <duration>
-#' @noRd
-.parse_eblink_lines <- function(lines) {
-  if (length(lines) == 0L) return(.empty_events_tibble())
-  split_lines <- stringr::str_split(stringr::str_squish(lines), "\\s+")
-  rows <- lapply(split_lines, function(cols) {
-    if (length(cols) < 5L) return(NULL)
-    list(
-      type       = "BLINK",
-      eye        = cols[[2]],
-      start_time = suppressWarnings(as.integer(cols[[3]])),
-      end_time   = suppressWarnings(as.integer(cols[[4]])),
-      duration   = suppressWarnings(as.integer(cols[[5]])),
-      x_start    = NA_real_,
-      y_start    = NA_real_,
-      x_end      = NA_real_,
-      y_end      = NA_real_,
-      avg_x      = NA_real_,
-      avg_y      = NA_real_,
-      avg_pupil  = NA_real_
-    )
-  })
-  rows <- rows[!vapply(rows, is.null, logical(1))]
-  if (length(rows) == 0L) return(.empty_events_tibble())
-  dplyr::bind_rows(rows)
-}
-
 #' Parse word boundary messages written by OpenSesame
 #'
 #' Expects lines of the form:
@@ -675,37 +393,6 @@ read_asc <- function(path,
     offset_deg = as.numeric(m[, 6L]),
     x_offset   = as.numeric(m[, 7L]),
     y_offset   = as.numeric(m[, 8L])
-  )
-}
-
-#' Empty samples tibble prototype
-#' @noRd
-.empty_samples_tibble <- function() {
-  dplyr::tibble(
-    time  = integer(0),
-    x     = numeric(0),
-    y     = numeric(0),
-    pupil = numeric(0),
-    eye   = character(0)
-  )
-}
-
-#' Empty events tibble prototype
-#' @noRd
-.empty_events_tibble <- function() {
-  dplyr::tibble(
-    type       = character(0),
-    eye        = character(0),
-    start_time = integer(0),
-    end_time   = integer(0),
-    duration   = integer(0),
-    x_start    = numeric(0),
-    y_start    = numeric(0),
-    x_end      = numeric(0),
-    y_end      = numeric(0),
-    avg_x      = numeric(0),
-    avg_y      = numeric(0),
-    avg_pupil  = numeric(0)
   )
 }
 
