@@ -13,7 +13,8 @@ read_asc(
   trial_end_pattern = NULL,
   parse_vars = TRUE,
   char_pattern =
-    "^MSG\\\\\\\\t\\\\\\\\d+\\\\\\\\s+TRIAL\\\\\\\\s+(\\\\\\\\d+)\\\\\\\\s+ITEM\\\\\\\\s+(\\\\\\\\d+)\\\\\\\\s+WORD\\\\\\\\s+(\\\\\\\\d+)\\\\\\\\s+CHAR\\\\\\\\s+(\\\\\\\\d+)\\\\\\\\s+(\\\\\\\\S+)\\\\\\\\s+(\\\\\\\\d+)"
+    "^MSG\\\\t\\\\d+\\\\s+TRIAL\\\\s+(\\\\d+)\\\\s+ITEM\\\\s+(\\\\d+)\\\\s+WORD\\\\s+(\\\\d+)\\\\s+CHAR\\\\s+(\\\\d+)\\\\s+(\\\\S+)\\\\s+(\\\\d+)",
+  encoding = "UTF-8"
 )
 }
 \arguments{

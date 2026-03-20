@@ -7,8 +7,10 @@
 get_trial(asc_result, trial_nr)
 }
 \arguments{
-\item{asc_result}{A named list as returned by \code{\link{read_asc}},
-with elements \code{samples} and \code{events} that contain a \code{trial_nr} column.}
+\item{asc_result}{A named list as returned by \code{\link{read_asc}} or
+\code{\link{read_eyelogic}}, with at least a \code{samples} element containing
+a \code{trial_nr} column.  The \code{events} element is optional (e.g., EyeLogic
+files have \code{events = NULL}).}
 
 \item{trial_nr}{Integer scalar.  The trial number to extract (as stored
 in the \code{trial_nr} column and in \code{asc_result$trial_db$trial_nr}).}
@@ -17,14 +19,15 @@ in the \code{trial_nr} column and in \code{asc_result$trial_db$trial_nr}).}
 A named list with two elements:
 \describe{
 \item{\code{samples}}{Tibble of samples for the specified trial.}
-\item{\code{events}}{Tibble of events for the specified trial.}
+\item{\code{events}}{Tibble of events for the specified trial, or \code{NULL}
+if \code{asc_result$events} is \code{NULL} (e.g., for EyeLogic files).}
 }
 }
 \description{
 Convenience function that filters the \code{samples} and \code{events} tables
-returned by \code{\link{read_asc}} to a single trial.  The tables must
-contain a \code{trial_nr} column, which is added automatically when
-\code{\link{read_asc}} detects trial structure in the file.
+returned by \code{\link{read_asc}} or \code{\link{read_eyelogic}} to a
+single trial.  The tables must contain a \code{trial_nr} column, which is
+added automatically when the reader detects trial structure in the file.
 }
 \examples{
 asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")

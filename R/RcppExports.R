@@ -2,6 +2,6 @@
 # Generator token: 10BE3573-1514-4C36-9D1C-5A225CD40393
 
 parse_asc_cpp <- function(path) {
-    .Call('_fixated_parse_asc_cpp', PACKAGE = 'fixated', path)
+    .Call(`_fixated_parse_asc_cpp`, path)
 }
 

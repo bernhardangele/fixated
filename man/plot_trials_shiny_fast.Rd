@@ -12,6 +12,7 @@ plot_trials_shiny_fast(
   measures = NULL,
   roi = NULL,
   trial_db = NULL,
+  chars = NULL,
   launch.browser = TRUE
 )
 }
@@ -34,6 +35,9 @@ recompute measures internally.}
 \code{\link{read_roi}}. Alias for \code{rois}.}
 
 \item{trial_db}{A data frame containing trial metadata (e.g. \code{t_display_on}).}
+
+\item{chars}{A data frame of character regions of interest. Takes precedence over
+\code{asc_result$character_boundaries}.}
 
 \item{launch.browser}{Logical.  Passed to
 \code{\link[shiny]{shinyApp}}'s \code{options} list as the \code{launch.browser}
