@@ -37,11 +37,20 @@
 #'   the recorded eye.  Merging only occurs within the same eye.  Defaults to
 #'   `"eye"`.
 #'
+#' @param annotate Logical scalar.  If `FALSE` (default), only cleaned
+#'   fixations are returned.  If `TRUE`, all original fixations are returned
+#'   with two additional columns: `removed` (logical) indicating whether the
+#'   fixation should be removed, and `reason` (character) indicating why
+#'   (`"too short"`, `"too short and merged"`, `"too long"`, `"out of bounds"`,
+#'   or `NA` if not removed).
+#'
 #' @return A [tibble][tibble::tibble] of cleaned fixations with the same
 #'   columns as `fixations`, sorted by `start_time` within each group.
 #'   The `duration` column is recomputed as `end_time - start_time` after
 #'   merging.  For merged fixations, `avg_x` and `avg_y` are
 #'   duration-weighted means of the contributing fixations.
+#'   When `annotate = TRUE`, two additional columns are included:
+#'   `removed` (logical) and `reason` (character).
 #'
 #' @importFrom dplyr tibble mutate filter arrange bind_rows select
 #' @importFrom rlang .data
@@ -58,6 +67,11 @@
 #' )
 #' clean <- clean_fixations(fixations, min_duration = 80, merge_distance = 40)
 #' print(clean)
+#'
+#' # Annotation mode: see which fixations are removed and why
+#' annotated <- clean_fixations(fixations, min_duration = 80, merge_distance = 40,
+#'                              annotate = TRUE)
+#' print(annotated)
 clean_fixations <- function(
     fixations,
     min_duration    = 80,
@@ -67,7 +81,8 @@ clean_fixations <- function(
     merge_distance  = 40,
     merge_max_gap   = 75,
     trial_col       = "trial_nr",
-    eye_col         = "eye"
+    eye_col         = "eye",
+    annotate        = FALSE
 ) {
   stopifnot(is.data.frame(fixations))
   required_cols <- c("start_time", "end_time", "duration", "avg_x", "avg_y")
@@ -90,6 +105,13 @@ clean_fixations <- function(
   }
   if (!is.null(eye_col) && eye_col %in% names(fixations)) {
     group_cols <- c(group_cols, eye_col)
+  }
+
+  if (isTRUE(annotate)) {
+    return(.clean_fixations_annotate(
+      fixations, min_duration, max_duration, x_bounds, y_bounds,
+      merge_distance, merge_max_gap, group_cols
+    ))
   }
 
   # Step 1 – remove outliers
@@ -124,13 +146,81 @@ clean_fixations <- function(
 }
 
 # ---------------------------------------------------------------------------
+# Annotation mode helper
+# ---------------------------------------------------------------------------
+
+#' Annotate all fixations with removal status and reason
+#' @noRd
+.clean_fixations_annotate <- function(
+    fixations, min_duration, max_duration, x_bounds, y_bounds,
+    merge_distance, merge_max_gap, group_cols
+) {
+  n <- nrow(fixations)
+  removed <- rep(FALSE, n)
+  reason  <- rep(NA_character_, n)
+
+  if (n == 0L) {
+    fixations$removed <- logical(0)
+    fixations$reason  <- character(0)
+    return(dplyr::as_tibble(fixations))
+  }
+
+  # Mark removals by duration and bounds
+  too_short <- fixations$duration < min_duration
+  too_long  <- fixations$duration > max_duration
+  out_x     <- fixations$avg_x < x_bounds[[1]] | fixations$avg_x > x_bounds[[2]]
+  out_y     <- fixations$avg_y < y_bounds[[1]] | fixations$avg_y > y_bounds[[2]]
+
+  removed[too_short] <- TRUE
+  reason[too_short]  <- "too short"
+  removed[too_long]  <- TRUE
+  reason[too_long]   <- "too long"
+  removed[out_x | out_y] <- TRUE
+  reason[out_x | out_y]  <- "out of bounds"
+
+  # Mark short fixations consumed during merging
+  if (length(group_cols) == 0L) {
+    merged_info <- .merge_fixations(fixations, merge_distance, merge_max_gap,
+                                    min_duration = min_duration)
+    removed[merged_info$removed_indices] <- TRUE
+    reason[merged_info$removed_indices]  <- "too short and merged"
+  } else {
+    group_keys <- unique(fixations[, group_cols, drop = FALSE])
+    for (i in seq_len(nrow(group_keys))) {
+      mask <- rep(TRUE, n)
+      for (col in group_cols) {
+        mask <- mask & (fixations[[col]] == group_keys[[col]][[i]])
+      }
+      idx <- which(mask)
+      merged_info <- .merge_fixations(fixations[idx, , drop = FALSE],
+                                      merge_distance, merge_max_gap,
+                                      min_duration = min_duration)
+      removed[idx[merged_info$removed_indices]] <- TRUE
+      reason[idx[merged_info$removed_indices]]  <- "too short and merged"
+    }
+  }
+
+  fixations$removed <- removed
+  fixations$reason  <- reason
+  dplyr::as_tibble(fixations[order(fixations$start_time), , drop = FALSE])
+}
+
+# ---------------------------------------------------------------------------
 # Internal merge helper
 # ---------------------------------------------------------------------------
 
 #' Merge adjacent fixations in a single (ungrouped) sequence
 #' @noRd
-.merge_fixations <- function(fixations, merge_distance, merge_max_gap) {
+.merge_fixations <- function(fixations, merge_distance, merge_max_gap,
+                             min_duration = NULL) {
+  track_removed <- !is.null(min_duration)
+  removed_indices <- integer(0)
+
   if (nrow(fixations) == 0L) {
+    if (track_removed) {
+      return(list(fixations = dplyr::as_tibble(fixations),
+                  removed_indices = removed_indices))
+    }
     return(dplyr::as_tibble(fixations))
   }
 
@@ -151,6 +241,10 @@ clean_fixations <- function(
       )
 
       if (gap <= merge_max_gap && dist <= merge_distance) {
+        # Track short fixations consumed by merging
+        if (track_removed && as.numeric(candidate$duration) < min_duration) {
+          removed_indices <- c(removed_indices, i)
+        }
         # Merge: weighted mean position, extend time span
         dur_cur  <- as.numeric(current$duration)
         dur_cand <- as.numeric(candidate$end_time - candidate$start_time)
@@ -173,5 +267,9 @@ clean_fixations <- function(
   merged_list[[length(merged_list) + 1L]] <- current
 
   result <- dplyr::bind_rows(lapply(merged_list, dplyr::as_tibble))
+
+  if (track_removed) {
+    return(list(fixations = result, removed_indices = removed_indices))
+  }
   result
 }

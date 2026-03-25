@@ -16,9 +16,9 @@
 #'
 #' @return A [tibble][tibble::tibble] with one row per EyeLink-detected
 #'   fixation and columns `start_time`, `end_time`, `duration`, `avg_x`,
-#'   `avg_y`, `avg_pupil`, `eye`.  If a `trial_nr` column is present in
-#'   `events`, it is preserved in the output.  The tibble is sorted by
-#'   `start_time`.
+#'   `avg_y`, `avg_pupil`, `eye`.  If `trial_nr` or `sentence_nr` columns
+#'   are present in `events`, they are preserved in the output.  The tibble
+#'   is sorted by `start_time`.
 #'
 #' @importFrom dplyr filter select arrange
 #' @importFrom rlang .data
@@ -46,6 +46,7 @@ get_eyelink_fixations <- function(events) {
   keep_cols <- c("start_time", "end_time", "duration",
                  "avg_x", "avg_y", "avg_pupil", "eye")
   if ("trial_nr" %in% names(fix)) keep_cols <- c(keep_cols, "trial_nr")
+  if ("sentence_nr" %in% names(fix)) keep_cols <- c(keep_cols, "sentence_nr")
   keep_cols <- keep_cols[keep_cols %in% names(fix)]
 
   fix <- dplyr::select(fix, dplyr::all_of(keep_cols))

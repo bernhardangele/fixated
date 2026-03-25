@@ -14,9 +14,9 @@ element of \code{\link{read_asc}}, with columns \code{type}, \code{eye},
 \value{
 A \link[tibble:tibble]{tibble} with one row per EyeLink-detected
 fixation and columns \code{start_time}, \code{end_time}, \code{duration}, \code{avg_x},
-\code{avg_y}, \code{avg_pupil}, \code{eye}.  If a \code{trial_nr} column is present in
-\code{events}, it is preserved in the output.  The tibble is sorted by
-\code{start_time}.
+\code{avg_y}, \code{avg_pupil}, \code{eye}.  If \code{trial_nr} or \code{sentence_nr} columns
+are present in \code{events}, they are preserved in the output.  The tibble
+is sorted by \code{start_time}.
 }
 \description{
 The EyeLink host computer runs its own fixation-detection algorithm and

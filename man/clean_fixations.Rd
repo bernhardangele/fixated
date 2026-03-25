@@ -13,7 +13,8 @@ clean_fixations(
   merge_distance = 40,
   merge_max_gap = 75,
   trial_col = "trial_nr",
-  eye_col = "eye"
+  eye_col = "eye",
+  annotate = FALSE
 )
 }
 \arguments{
@@ -50,6 +51,13 @@ identifying trials.  Merging only occurs within trials.  Defaults to
 \item{eye_col}{Character scalar or \code{NULL}.  Name of the column identifying
 the recorded eye.  Merging only occurs within the same eye.  Defaults to
 \code{"eye"}.}
+
+\item{annotate}{Logical scalar.  If \code{FALSE} (default), only cleaned
+fixations are returned.  If \code{TRUE}, all original fixations are returned
+with two additional columns: \code{removed} (logical) indicating whether the
+fixation should be removed, and \code{reason} (character) indicating why
+(\code{"too short"}, \code{"too short and merged"}, \code{"too long"}, \code{"out of bounds"},
+or \code{NA} if not removed).}
 }
 \value{
 A \link[tibble:tibble]{tibble} of cleaned fixations with the same
@@ -57,6 +65,8 @@ columns as \code{fixations}, sorted by \code{start_time} within each group.
 The \code{duration} column is recomputed as \code{end_time - start_time} after
 merging.  For merged fixations, \code{avg_x} and \code{avg_y} are
 duration-weighted means of the contributing fixations.
+When \code{annotate = TRUE}, two additional columns are included:
+\code{removed} (logical) and \code{reason} (character).
 }
 \description{
 Post-processes a data frame of fixations (e.g. from \code{detect_fixations()} or
@@ -80,4 +90,9 @@ fixations <- dplyr::tibble(
 )
 clean <- clean_fixations(fixations, min_duration = 80, merge_distance = 40)
 print(clean)
+
+# Annotation mode: see which fixations are removed and why
+annotated <- clean_fixations(fixations, min_duration = 80, merge_distance = 40,
+                             annotate = TRUE)
+print(annotated)
 }
