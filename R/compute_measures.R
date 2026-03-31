@@ -205,6 +205,11 @@ compute_eye_measures <- function(
     out <- dplyr::left_join(out, word_lookup, by = join_by)
   }
 
+  # Sort by trial, eye, word_id
+  sort_cols <- c(trial_col, if (has_eye) eye_col, "word_id")
+  ord       <- do.call(order, lapply(sort_cols, function(col) out[[col]]))
+  out       <- out[ord, , drop = FALSE]
+
   # Reorder output columns
   lead_cols    <- c(trial_col,
                     if ("sentence_nr" %in% names(out)) "sentence_nr",
