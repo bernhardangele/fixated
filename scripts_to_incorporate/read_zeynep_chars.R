@@ -44,6 +44,6 @@ if (!is.null(data$character_boundaries)) {
 
 fixations <- get_eyelink_fixations(zeynep_data$events)
 
-clean_fixations(fixations)
+zeynep_data$fixations <- clean_fixations(fixations)
 
 plot_trials_shiny_fast(zeynep_data)

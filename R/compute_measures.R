@@ -39,7 +39,9 @@
 #'   trial.  Defaults to `NULL` (no filtering).
 #'
 #' @return A [tibble][tibble::tibble] with one row per trial × word
-#'   combination that received at least one fixation.  Columns:
+#'   combination (all words from the ROI are included).  Words that received
+#'   no fixations have `NA` for `ffd`, `gd`, `gpt`, and `tvt`, and
+#'   `n_fixations` is set to `0L`.  Columns:
 #'   \describe{
 #'     \item{`trial`}{Trial identifier.}
 #'     \item{`sentence_nr`}{Sentence/item identifier (if available in `roi`).}
@@ -50,10 +52,10 @@
 #'       the first pass.}
 #'     \item{`gpt`}{Go-past time (ms); `NA` if the word was never fixated.}
 #'     \item{`tvt`}{Total viewing time (ms).}
-#'     \item{`n_fixations`}{Total number of fixations on the word.}
+#'     \item{`n_fixations`}{Total number of fixations on the word (`0L` if
+#'       not fixated).}
 #'   }
-#'   Rows for words that received zero fixations are not included.  If
-#'   `eye_col` is present, the `eye` column is also included and measures are
+#'   If `eye_col` is present, the `eye` column is also included and measures are
 #'   computed per eye.
 #'
 #' @importFrom dplyr tibble mutate filter arrange bind_rows select left_join
@@ -172,6 +174,28 @@ compute_eye_measures <- function(
   }
 
   out <- dplyr::bind_rows(results)
+
+  # Expand to include ALL trial × word combinations from ROI (unfixated words
+  # get NA for every measure)
+  roi_trial_word_cols <- intersect(c(trial_col, "word_id"), names(roi))
+  word_lookup <- unique(roi[, roi_trial_word_cols, drop = FALSE])
+
+  if (has_eye && nrow(out) > 0L) {
+    all_eyes <- unique(out[[eye_col]])
+    eye_tbl  <- stats::setNames(data.frame(all_eyes), eye_col)
+    word_lookup <- merge(word_lookup, eye_tbl, all = TRUE)
+  }
+
+  if (nrow(out) > 0L) {
+    out <- dplyr::right_join(out, word_lookup, by = names(word_lookup))
+  } else {
+    out <- dplyr::as_tibble(word_lookup)
+  }
+
+  # Unfixated words: set n_fixations to 0 instead of NA
+  if ("n_fixations" %in% names(out)) {
+    out$n_fixations <- ifelse(is.na(out$n_fixations), 0L, out$n_fixations)
+  }
 
   # Attach word text and sentence_nr if requested/available
   if ("word" %in% names(roi) || "sentence_nr" %in% names(roi)) {

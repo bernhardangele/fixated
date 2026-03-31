@@ -43,7 +43,9 @@ trial.  Defaults to \code{NULL} (no filtering).}
 }
 \value{
 A \link[tibble:tibble]{tibble} with one row per trial × word
-combination that received at least one fixation.  Columns:
+combination (all words from the ROI are included).  Words that received
+no fixations have \code{NA} for \code{ffd}, \code{gd}, \code{gpt}, and \code{tvt}, and
+\code{n_fixations} is set to \code{0L}.  Columns:
 \describe{
 \item{\code{trial}}{Trial identifier.}
 \item{\code{sentence_nr}}{Sentence/item identifier (if available in \code{roi}).}
@@ -54,10 +56,10 @@ combination that received at least one fixation.  Columns:
 the first pass.}
 \item{\code{gpt}}{Go-past time (ms); \code{NA} if the word was never fixated.}
 \item{\code{tvt}}{Total viewing time (ms).}
-\item{\code{n_fixations}}{Total number of fixations on the word.}
+\item{\code{n_fixations}}{Total number of fixations on the word (\code{0L} if
+not fixated).}
 }
-Rows for words that received zero fixations are not included.  If
-\code{eye_col} is present, the \code{eye} column is also included and measures are
+If \code{eye_col} is present, the \code{eye} column is also included and measures are
 computed per eye.
 }
 \description{

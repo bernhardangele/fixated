@@ -115,7 +115,12 @@ test_that("compute_eye_measures n_fixations is correct", {
     avg_y      = c(400,  400)
   )
   result <- compute_eye_measures(fixations, make_test_roi())
-  expect_true(all(result$n_fixations == 1L))
+  # Fixated words have 1 fixation each
+  fixated <- result[result$n_fixations > 0, ]
+  expect_true(all(fixated$n_fixations == 1L))
+  # Unfixated word has 0 fixations
+  unfixated <- result[result$n_fixations == 0, ]
+  expect_equal(nrow(unfixated), 1L)
 })
 
 test_that("compute_eye_measures errors on missing fixation columns", {
@@ -129,20 +134,29 @@ test_that("compute_eye_measures errors on missing ROI columns", {
 })
 
 test_that("compute_eye_measures FFD is NA when word was skipped", {
-  # Fixation goes directly to word 3, skipping words 1 and 2
+  # First fixation lands on word 2, then later fixation on word 1
+  # Word 1 is "skipped" because a prior fixation was on a later word (word 2)
   fixations <- dplyr::tibble(
     trial_nr   = 1L,
-    start_time = c(0L),
-    end_time   = c(150L),
-    duration   = c(150L),
-    avg_x      = c(370),
-    avg_y      = c(400)
+    start_time = c(0L,   200L),
+    end_time   = c(150L, 350L),
+    duration   = c(150L, 150L),
+    avg_x      = c(260,  145),
+    avg_y      = c(400,  400)
   )
   result <- compute_eye_measures(fixations, make_test_roi())
 
-  # Only word 3 should have a row; FFD should be set for first pass
-  expect_equal(nrow(result), 1L)
-  expect_equal(result$word_id, 3L)
+  # All 3 ROI words are present
+  expect_equal(nrow(result), 3L)
+  # Word 1 was skipped (prior fixation on word 2 > word 1)
+  w1 <- result[result$word_id == 1L, ]
+  expect_true(is.na(w1$ffd))
+  # Word 2 was not skipped (first fixation, no prior fixations)
+  w2 <- result[result$word_id == 2L, ]
+  expect_true(!is.na(w2$ffd))
+  # Word 3 was never fixated
+  w3 <- result[result$word_id == 3L, ]
+  expect_equal(w3$n_fixations, 0L)
 })
 
 # ---------------------------------------------------------------------------
@@ -184,10 +198,15 @@ test_that("compute_eye_measures trial_db: fixation starting before display_on is
   )
   trial_db <- make_test_trial_db(display_on = 50L, display_off = 800L)
   result   <- compute_eye_measures(fixations, make_test_roi(), trial_db = trial_db)
-  # Word 1 should have no fixations (its only fixation starts at 0, which is NOT > 50)
-  expect_false(1L %in% result$word_id)
-  # Word 2 should still appear (start_time=200 > 50)
+  # All ROI words are present
+  expect_true(1L %in% result$word_id)
   expect_true(2L %in% result$word_id)
+  # Word 1 has no fixations (its only fixation starts at 0, which is NOT > 50)
+  w1 <- result[result$word_id == 1L, ]
+  expect_equal(w1$n_fixations, 0L)
+  # Word 2 still has its fixation (start_time=200 > 50)
+  w2 <- result[result$word_id == 2L, ]
+  expect_equal(w2$n_fixations, 1L)
 })
 
 test_that("compute_eye_measures trial_db: fixation ending after display_off is excluded", {
@@ -195,8 +214,11 @@ test_that("compute_eye_measures trial_db: fixation ending after display_off is e
   # Set display_off = 700 so that fixation 4 (end_time 750 >= 700) is excluded
   trial_db <- make_test_trial_db(display_on = -100L, display_off = 700L)
   result   <- compute_eye_measures(make_test_fixations(), make_test_roi(), trial_db = trial_db)
-  # Word 3 should have no fixations now (fixation ends at 750, after display_off=700)
-  expect_false(3L %in% result$word_id)
+  # All ROI words are present
+  expect_true(3L %in% result$word_id)
+  # Word 3 has no fixations (fixation ends at 750, after display_off=700)
+  w3 <- result[result$word_id == 3L, ]
+  expect_equal(w3$n_fixations, 0L)
 })
 
 test_that("compute_eye_measures trial_db: NA display_on disables lower bound", {
@@ -219,4 +241,40 @@ test_that("compute_eye_measures trial_db: errors on missing trial_db columns", {
     compute_eye_measures(make_test_fixations(), make_test_roi(), trial_db = bad_tdb),
     "missing columns"
   )
+})
+
+test_that("compute_eye_measures includes unfixated words with NAs", {
+  roi <- dplyr::tibble(
+    trial_nr = 1L,
+    word_id  = 1:4,
+    word     = c("The", "quick", "brown", "fox"),
+    x_start  = c(100, 200, 320, 450),
+    x_end    = c(195, 315, 415, 550),
+    y_start  = c(380, 380, 380, 380),
+    y_end    = c(420, 420, 420, 420)
+  )
+  # Fixations only land on words 1 and 2
+  fixations <- dplyr::tibble(
+    trial_nr   = 1L,
+    start_time = c(0L, 200L),
+    end_time   = c(150L, 380L),
+    duration   = c(150L, 180L),
+    avg_x      = c(145, 260),
+    avg_y      = c(400, 400)
+  )
+  result <- compute_eye_measures(fixations, roi)
+  expect_equal(nrow(result), 4L)
+  # Words 3 and 4 should have NA measures and 0 fixations
+  w3 <- result[result$word_id == 3L, ]
+  w4 <- result[result$word_id == 4L, ]
+  expect_true(is.na(w3$ffd))
+  expect_true(is.na(w3$gd))
+  expect_true(is.na(w3$gpt))
+  expect_true(is.na(w3$tvt))
+  expect_equal(w3$n_fixations, 0L)
+  expect_equal(w4$n_fixations, 0L)
+  # Words 1 and 2 should have valid measures
+  w1 <- result[result$word_id == 1L, ]
+  expect_true(!is.na(w1$ffd))
+  expect_equal(w1$n_fixations, 1L)
 })
