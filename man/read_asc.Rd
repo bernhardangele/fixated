@@ -32,7 +32,7 @@ setups that presets \code{trial_start_pattern} and \code{trial_end_pattern}.
 Currently supported values are \code{"eyelink_opensesame"} (default) and
 \code{"custom"}.  For \code{"eyelink_opensesame"}, the trial start is detected
 from \verb{TRIAL … ITEM … WORD 1} ROI messages written by OpenSesame, and
-the trial end from \code{END} lines written by the EyeLink host.  Set to
+the trial end from \code{stop_trial} MSG lines.  Set to
 \code{"custom"} and supply \code{trial_start_pattern}/\code{trial_end_pattern} for
 other setups.}
 
@@ -86,7 +86,13 @@ no such messages are found.}
 \item{\code{trial_db}}{A \link[tibble:tibble]{tibble} with one row per trial
 and columns \code{trial_nr}, \code{sentence_nr}, \code{t_trial_start},
 \code{t_recording_start}, \code{t_gaze_target_on}, \code{t_gaze_target_off},
-\code{t_display_on}, \code{t_display_off}, \code{t_trial_end}, \code{has_display_off}.
+\code{t_display_on}, \code{t_display_off}, \code{t_trial_end}, \code{has_display_off},
+\code{has_display_restart}, \code{has_recording_restart}.
+\code{has_display_restart} is \code{TRUE} when \verb{DISPLAY ON} appears more than
+once in a trial (the stimulus may have been shown more than once).
+\code{has_recording_restart} is \code{TRUE} when recording \code{START} appears more
+than once in a trial (indicating a drift correction or recalibration
+interrupted recording mid-trial).
 When \code{parse_vars = TRUE} and \code{eye_tracker = "eyelink_opensesame"},
 additional columns are appended for each OpenSesame variable whose
 value is a simple scalar (no spaces).  \code{NULL} when no trial

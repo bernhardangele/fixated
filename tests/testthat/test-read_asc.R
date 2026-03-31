@@ -84,7 +84,8 @@ test_that("trial_db has required columns", {
   expected <- c("trial_nr", "sentence_nr", "t_trial_start",
                 "t_recording_start", "t_gaze_target_on", "t_gaze_target_off",
                 "t_display_on", "t_display_off", "t_trial_end",
-                "has_display_off")
+                "has_display_off", "has_display_restart",
+                "has_recording_restart")
   expect_true(all(expected %in% names(tdb)))
 })
 
@@ -128,6 +129,15 @@ test_that("t_trial_end uses stop_trial timestamp not END timestamp", {
   expect_equal(tdb$t_trial_end[[1L]], stop_ts)
 })
 
+test_that("clean example has no display or recording restarts", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file)
+  tdb    <- result$trial_db
+  expect_true(all(!tdb$has_display_restart))
+  expect_true(all(!tdb$has_recording_restart))
+})
+
 test_that("read_asc adds trial_nr column to samples for OpenSesame file", {
   asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
   skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
@@ -159,7 +169,8 @@ test_that("trial_db has no var columns when parse_vars = FALSE", {
   tdb    <- result$trial_db
   base_cols <- c("trial_nr", "sentence_nr", "t_trial_start", "t_recording_start",
                  "t_gaze_target_on", "t_gaze_target_off", "t_display_on",
-                 "t_display_off", "t_trial_end", "has_display_off")
+                 "t_display_off", "t_trial_end", "has_display_off",
+                 "has_display_restart", "has_recording_restart")
   expect_equal(sort(names(tdb)), sort(base_cols))
 })
 

@@ -25,7 +25,7 @@
 #'   Currently supported values are `"eyelink_opensesame"` (default) and
 #'   `"custom"`.  For `"eyelink_opensesame"`, the trial start is detected
 #'   from `TRIAL … ITEM … WORD 1` ROI messages written by OpenSesame, and
-#'   the trial end from `END` lines written by the EyeLink host.  Set to
+#'   the trial end from `stop_trial` MSG lines.  Set to
 #'   `"custom"` and supply `trial_start_pattern`/`trial_end_pattern` for
 #'   other setups.
 #' @param trial_start_pattern Character scalar or `NULL`.  A regular
@@ -74,7 +74,13 @@
 #'     \item{`trial_db`}{A [tibble][tibble::tibble] with one row per trial
 #'       and columns `trial_nr`, `sentence_nr`, `t_trial_start`,
 #'       `t_recording_start`, `t_gaze_target_on`, `t_gaze_target_off`,
-#'       `t_display_on`, `t_display_off`, `t_trial_end`, `has_display_off`.
+#'       `t_display_on`, `t_display_off`, `t_trial_end`, `has_display_off`,
+#'       `has_display_restart`, `has_recording_restart`.
+#'       `has_display_restart` is `TRUE` when `DISPLAY ON` appears more than
+#'       once in a trial (the stimulus may have been shown more than once).
+#'       `has_recording_restart` is `TRUE` when recording `START` appears more
+#'       than once in a trial (indicating a drift correction or recalibration
+#'       interrupted recording mid-trial).
 #'       When `parse_vars = TRUE` and `eye_tracker = "eyelink_opensesame"`,
 #'       additional columns are appended for each OpenSesame variable whose
 #'       value is a simple scalar (no spaces).  `NULL` when no trial
@@ -479,6 +485,16 @@ read_asc <- function(path,
     result
   }
 
+  # Helper: count occurrences per trial.
+  count_per_trial <- function(idx) {
+    if (length(idx) == 0L) return(rep(0L, n_trials))
+    ti    <- findInterval(idx, start_idx)
+    valid <- ti >= 1L & ti <= n_trials & idx < next_start[pmax(ti, 1L)]
+    ti    <- ti[valid]
+    if (length(ti) == 0L) return(rep(0L, n_trials))
+    tabulate(ti, nbins = n_trials)
+  }
+
   # Helper: scan for MSG lines matching a pattern; extract timestamp col 2
   scan_msg <- function(pattern) {
     idx <- which(stringr::str_detect(lines, pattern))
@@ -490,23 +506,22 @@ read_asc <- function(path,
     list(idx = idx, ts = ts)
   }
 
-  # --- find trial end timestamps ---------------------------------------------
-  t_ends <- rep(NA_integer_, n_trials)
+  # --- find trial end timestamps and END line indices --------------------------
+  # Always extract END line indices (for counting recording stops per trial)
+  end_idx <- which(stringr::str_starts(lines, "END"))
+  t_ends  <- rep(NA_integer_, n_trials)
   if (!is.null(end_pattern) && nchar(end_pattern) > 0L) {
     if (stringr::str_detect(end_pattern, "MSG")) {
       # MSG-type pattern (e.g. stop_trial) → reuse scan_msg + first_per_trial
       end_msg <- scan_msg(end_pattern)
       t_ends  <- first_per_trial(end_msg$idx, end_msg$ts)
-    } else {
+    } else if (length(end_idx) > 0L) {
       # END-type pattern (e.g. ^END\\b) → extract timestamp from END lines
-      end_idx <- which(stringr::str_detect(lines, end_pattern))
-      if (length(end_idx) > 0L) {
-        for (i in seq_len(n_trials)) {
-          cands <- end_idx[end_idx >= start_idx[i] & end_idx < next_start[i]]
-          if (length(cands) > 0L) {
-            m_e <- stringr::str_match(lines[cands[1L]], "^END\\s+(\\d+)")
-            if (!is.na(m_e[2L])) t_ends[i] <- as.integer(m_e[2L])
-          }
+      for (i in seq_len(n_trials)) {
+        cands <- end_idx[end_idx >= start_idx[i] & end_idx < next_start[i]]
+        if (length(cands) > 0L) {
+          m_e <- stringr::str_match(lines[cands[1L]], "^END\\s+(\\d+)")
+          if (!is.na(m_e[2L])) t_ends[i] <- as.integer(m_e[2L])
         }
       }
     }
@@ -528,18 +543,24 @@ read_asc <- function(path,
   t_disp_on  <- first_per_trial(disp_on$idx,  disp_on$ts)
   t_disp_off <- first_per_trial(disp_off$idx, disp_off$ts)
 
+  # --- detect recording interruptions and display restarts --------------------
+  n_disp_on         <- count_per_trial(disp_on$idx)
+  n_start_recording <- count_per_trial(start_rec_idx)
+
   # --- assemble trial_db ----------------------------------------------------
   trial_db <- dplyr::tibble(
-    trial_nr          = trial_nrs,
-    sentence_nr       = sent_nrs,
-    t_trial_start     = t_starts,
-    t_recording_start = t_rec_start,
-    t_gaze_target_on  = t_gaze_on,
-    t_gaze_target_off = t_gaze_off,
-    t_display_on      = t_disp_on,
-    t_display_off     = t_disp_off,
-    t_trial_end       = t_ends,
-    has_display_off   = !is.na(t_disp_off)
+    trial_nr            = trial_nrs,
+    sentence_nr         = sent_nrs,
+    t_trial_start       = t_starts,
+    t_recording_start   = t_rec_start,
+    t_gaze_target_on    = t_gaze_on,
+    t_gaze_target_off   = t_gaze_off,
+    t_display_on        = t_disp_on,
+    t_display_off       = t_disp_off,
+    t_trial_end         = t_ends,
+    has_display_off     = !is.na(t_disp_off),
+    has_display_restart   = n_disp_on > 1L,
+    has_recording_restart = n_start_recording > 1L
   )
 
   # --- optionally add OpenSesame var columns --------------------------------
