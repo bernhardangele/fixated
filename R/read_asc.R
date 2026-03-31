@@ -417,7 +417,7 @@ read_asc <- function(path,
   if (eye_tracker == "eyelink_opensesame") {
     return(list(
       start = "^MSG\\t\\d+\\s+TRIAL\\s+\\d+\\s+ITEM\\s+\\d+\\s+WORD\\s+1\\b",
-      end   = default_end
+      end   = "^MSG\\t\\d+\\s+stop_trial"
     ))
   }
 
@@ -429,7 +429,7 @@ read_asc <- function(path,
 #'
 #' @param lines Character vector of all lines.
 #' @param start_pattern Regex matching the first line of each trial.
-#' @param end_pattern Regex matching the last line of each trial (`END`).
+#' @param end_pattern Regex matching the last line of each trial (e.g. MSG stop_trial or END).
 #' @param eye_tracker Character scalar identifying the eye-tracker type.
 #' @param parse_vars Logical; parse OpenSesame `var` messages?
 #' @return Tibble with one row per trial, or `NULL` if no trials found.
@@ -463,21 +463,6 @@ read_asc <- function(path,
     sent_nrs  <- rep(NA_integer_, n_trials)
   }
 
-  # --- find END timestamps --------------------------------------------------
-  t_ends <- rep(NA_integer_, n_trials)
-  if (!is.null(end_pattern) && nchar(end_pattern) > 0L) {
-    end_idx <- which(stringr::str_detect(lines, end_pattern))
-    if (length(end_idx) > 0L) {
-      for (i in seq_len(n_trials)) {
-        cands <- end_idx[end_idx >= start_idx[i] & end_idx < next_start[i]]
-        if (length(cands) > 0L) {
-          m_e <- stringr::str_match(lines[cands[1L]], "^END\\s+(\\d+)")
-          if (!is.na(m_e[2L])) t_ends[i] <- as.integer(m_e[2L])
-        }
-      }
-    }
-  }
-
   # --- single-pass scan for per-trial event timestamps ----------------------
   # Helper: given a set of line indices and their extracted timestamps,
   # return the first timestamp per trial.
@@ -503,6 +488,28 @@ read_asc <- function(path,
     m  <- stringr::str_match(lines[idx], "^MSG\\t(\\d+)")
     ts <- suppressWarnings(as.integer(m[, 2L]))
     list(idx = idx, ts = ts)
+  }
+
+  # --- find trial end timestamps ---------------------------------------------
+  t_ends <- rep(NA_integer_, n_trials)
+  if (!is.null(end_pattern) && nchar(end_pattern) > 0L) {
+    if (stringr::str_detect(end_pattern, "MSG")) {
+      # MSG-type pattern (e.g. stop_trial) → reuse scan_msg + first_per_trial
+      end_msg <- scan_msg(end_pattern)
+      t_ends  <- first_per_trial(end_msg$idx, end_msg$ts)
+    } else {
+      # END-type pattern (e.g. ^END\\b) → extract timestamp from END lines
+      end_idx <- which(stringr::str_detect(lines, end_pattern))
+      if (length(end_idx) > 0L) {
+        for (i in seq_len(n_trials)) {
+          cands <- end_idx[end_idx >= start_idx[i] & end_idx < next_start[i]]
+          if (length(cands) > 0L) {
+            m_e <- stringr::str_match(lines[cands[1L]], "^END\\s+(\\d+)")
+            if (!is.na(m_e[2L])) t_ends[i] <- as.integer(m_e[2L])
+          }
+        }
+      }
+    }
   }
 
   # START line (not a MSG line)

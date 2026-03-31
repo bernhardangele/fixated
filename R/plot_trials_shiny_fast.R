@@ -397,7 +397,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
 
     # Word measures (FFD, GD, TVT) – computed only when needed
     word_measures <- shiny::reactive({
-      shiny::req(input$show_measures)
+      shiny::req(input$show_measures || input$show_word_table)
       tnr <- current_tnr()
       if (!is.null(measures)) {
         wm <- if ("trial_nr" %in% names(measures)) {

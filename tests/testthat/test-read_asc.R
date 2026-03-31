@@ -108,12 +108,24 @@ test_that("trial_db captures GAZE TARGET ON timestamp", {
   expect_true(!is.na(tdb$t_gaze_target_on[[1L]]))
 })
 
-test_that("trial_db captures trial_end from END line", {
+test_that("trial_db captures trial_end from stop_trial MSG", {
   asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
   skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
   result <- read_asc(asc_file)
   tdb    <- result$trial_db
   expect_true(!is.na(tdb$t_trial_end[[1L]]))
+})
+
+test_that("t_trial_end uses stop_trial timestamp not END timestamp", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  lines  <- readLines(asc_file, encoding = "UTF-8")
+  result <- read_asc(asc_file)
+  tdb    <- result$trial_db
+  # Extract stop_trial timestamp from the first occurrence in the file
+  stop_lines <- grep("stop_trial", lines, value = TRUE)
+  stop_ts    <- as.integer(stringr::str_match(stop_lines[[1L]], "^MSG\\t(\\d+)")[, 2L])
+  expect_equal(tdb$t_trial_end[[1L]], stop_ts)
 })
 
 test_that("read_asc adds trial_nr column to samples for OpenSesame file", {
@@ -222,6 +234,23 @@ test_that("get_eyelink_fixations preserves trial_nr when present", {
     fix <- get_eyelink_fixations(result$events)
     expect_true("trial_nr" %in% names(fix))
   }
+})
+
+test_that("get_eyelink_fixations preserves sentence_nr when present", {
+  events <- dplyr::tibble(
+    type        = rep("FIXATION", 3),
+    eye         = rep("R", 3),
+    start_time  = c(0L, 200L, 400L),
+    end_time    = c(100L, 300L, 500L),
+    duration    = c(100L, 100L, 100L),
+    avg_x       = c(300, 400, 500),
+    avg_y       = c(400, 400, 400),
+    trial_nr    = c(1L, 1L, 2L),
+    sentence_nr = c(1L, 2L, 1L)
+  )
+  fix <- get_eyelink_fixations(events)
+  expect_true("sentence_nr" %in% names(fix))
+  expect_equal(fix$sentence_nr, c(1L, 2L, 1L))
 })
 
 test_that("get_eyelink_fixations errors on missing required columns", {
