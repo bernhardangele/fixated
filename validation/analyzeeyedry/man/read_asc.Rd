@@ -4,7 +4,8 @@
 \alias{read_asc}
 \title{Read an EyeLink ASC file and extract fixations in character coordinates}
 \usage{
-read_asc(filepath, lowest_cond = 1L, highest_cond = 999L)
+read_asc(filepath, lowest_cond = 1L, highest_cond = 999L,
+  trial_pattern = "^[A-Za-z]")
 }
 \arguments{
 \item{filepath}{Path to the .asc file.}
@@ -12,6 +13,13 @@ read_asc(filepath, lowest_cond = 1L, highest_cond = 999L)
 \item{lowest_cond}{Minimum condition number to include (default 1).}
 
 \item{highest_cond}{Maximum condition number to include (default 999).}
+
+\item{trial_pattern}{Regular expression applied to the trial-ID token (the
+word immediately following \code{TRIALID}) to decide whether to include
+the trial.  The default \code{"^[A-Za-z]"} accepts every trial whose ID
+starts with a letter (i.e. all standard EyeLink / EyeTrack trials).  Use
+\code{"^E"} to restrict to experimental-condition trials only, or
+\code{"^[EF]"} for experimental and filler trials.}
 }
 \value{
 A list with elements \code{trials} and \code{subj} (NULL).
