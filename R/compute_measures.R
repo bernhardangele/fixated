@@ -464,7 +464,8 @@ compute_eye_measures <- function(
         if (i < n_fix) {
           np <- px[i + 1L]; nt <- dur[i + 1L]
           is_next_sht <- !is.null(shorttime) && nt <= shorttime
-          is_next_lng <- !is.null(longtime)  && nt >= longtime  # strictly < longtime for oreg
+          # eyedry oreg requires next fixation < longtime (strictly); mark TRUE when >= longtime
+          is_next_lng <- !is.null(longtime) && nt >= longtime
           if (np < x_s && !is_next_sht && !is_next_lng) {
             oreg_V <- 1L
           }
@@ -483,7 +484,8 @@ compute_eye_measures <- function(
         if (!is_sht[i] && !is_lng[i] && i > 1L) {
           lp <- px[i - 1L]; lt <- dur[i - 1L]
           is_last_sht <- !is.null(shorttime) && lt <= shorttime
-          is_last_lng <- !is.null(longtime)  && lt >= longtime  # strictly < longtime for ireg
+          # eyedry ireg requires previous fixation < longtime (strictly); mark TRUE when >= longtime
+          is_last_lng <- !is.null(longtime) && lt >= longtime
           if (lp > x_e && !is_last_sht && !is_last_lng) {
             ireg_V <- 1L
             break
