@@ -187,9 +187,16 @@ read_da1 <- function(filepath, cpos = 2L, ipos = 3L,
 #' @param filepath      Path to the .asc file.
 #' @param lowest_cond   Minimum condition number to include (default 1).
 #' @param highest_cond  Maximum condition number to include (default 999).
+#' @param trial_pattern Regular expression applied to the trial-ID token (the
+#'   word immediately following \code{TRIALID}) to decide whether to include
+#'   the trial.  The default \code{"^[A-Za-z]"} accepts every trial whose ID
+#'   starts with a letter (i.e. all standard EyeLink / EyeTrack trials).  Use
+#'   \code{"^E"} to restrict to experimental-condition trials only, or
+#'   \code{"^[EF]"} for experimental and filler trials.
 #' @return A list with elements \code{trials} and \code{subj} (NULL).
 #' @export
-read_asc <- function(filepath, lowest_cond = 1L, highest_cond = 999L) {
+read_asc <- function(filepath, lowest_cond = 1L, highest_cond = 999L,
+                     trial_pattern = "^[A-Za-z]") {
   lines <- readLines(filepath, warn = FALSE)
   n <- length(lines)
 
@@ -202,18 +209,32 @@ read_asc <- function(filepath, lowest_cond = 1L, highest_cond = 999L) {
 
   for (line in lines) {
     # ---- Trial start (TRIALID) ----
-    if (grepl("TRIALID\\s+E(\\d+)I(\\d+)", line)) {
-      m <- regmatches(line, regexpr("TRIALID\\s+E(\\d+)I(\\d+)D?(\\d*)", line))
-      if (length(m) > 0) {
-        nums <- regmatches(m, gregexpr("\\d+", m))[[1]]
-        if (length(nums) >= 2) {
-          cond  <- as.integer(nums[1])
-          item  <- as.integer(nums[2])
-          seq_n <- seq_n + 1L
-          in_trial <- TRUE
-          synctime <- NA_real_
-          xpos_l <- numeric(0); xpos_r <- numeric(0)
-          fixations <- list()
+    if (grepl("TRIALID\\s+(\\S+)", line)) {
+      m_tid <- regmatches(line, regexpr("TRIALID\\s+(\\S+)", line))
+      if (length(m_tid) > 0L) {
+        trial_id <- sub("TRIALID\\s+", "", m_tid)
+        # trial_pattern FILTERS which trials to include (e.g. "^E" for
+        # experimental only, "^[EF]" for experimental + filler).
+        # The parsing regex below is FIXED: it extracts cond and item from
+        # the standard EyeTrack/EyeLink format [letters][cond][letter][item].
+        if (grepl(trial_pattern, trial_id)) {
+          # Parse [letters][cond][letter][item] e.g. E1I28D0, P100I8D0, F12I2D1
+          m <- regmatches(trial_id,
+                          regexpr("^[A-Za-z]+(\\d+)[A-Za-z](\\d+)", trial_id))
+          if (length(m) > 0L) {
+            nums <- regmatches(m, gregexpr("\\d+", m))[[1L]]
+            if (length(nums) >= 2L) {
+              cond  <- as.integer(nums[1L])
+              item  <- as.integer(nums[2L])
+              seq_n <- seq_n + 1L
+              in_trial <- TRUE
+              synctime <- NA_real_
+              xpos_l <- numeric(0); xpos_r <- numeric(0)
+              fixations <- list()
+            }
+          }
+        } else {
+          in_trial <- FALSE
         }
       }
       next
@@ -1009,11 +1030,13 @@ extract_word_regions_from_script <- function(filepath,
 asc_to_fixations <- function(filepath,
                               subj          = 1L,
                               lowest_cond   = 1L,
-                              highest_cond  = 999L) {
+                              highest_cond  = 999L,
+                              trial_pattern = "^[A-Za-z]") {
   # Re-use the parsing logic from read_asc, then flatten to a tibble.
   raw <- read_asc(filepath,
-                  lowest_cond  = lowest_cond,
-                  highest_cond = highest_cond)
+                  lowest_cond   = lowest_cond,
+                  highest_cond  = highest_cond,
+                  trial_pattern = trial_pattern)
   raw$subj <- as.integer(subj)
 
   rows <- list()
@@ -1454,7 +1477,8 @@ analyze_eyedry <- function(asc_files    = NULL,
                            max_y        = 1000L,
                            lowest_cond  = 1L,
                            highest_cond = 999L,
-                           nregmax      = 7L) {
+                           nregmax      = 7L,
+                           trial_pattern = "^[A-Za-z]") {
   # ---- Read region boundaries ----
   cnt <- read_cnt(cnt_file)
   if (nrow(cnt) == 0L) stop("No region data found in CNT file: ", cnt_file)
@@ -1476,7 +1500,8 @@ analyze_eyedry <- function(asc_files    = NULL,
     for (fname in asc_files) {
       subj_id <- subj_id + 1L
       dat <- read_asc(fname, lowest_cond = lowest_cond,
-                      highest_cond = highest_cond)
+                      highest_cond  = highest_cond,
+                      trial_pattern = trial_pattern)
       dat$subj <- subj_id
       all_subject_data[[length(all_subject_data) + 1L]] <- dat
     }

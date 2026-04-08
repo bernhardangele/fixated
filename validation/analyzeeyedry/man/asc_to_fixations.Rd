@@ -4,7 +4,8 @@
 \alias{asc_to_fixations}
 \title{Read an EyeLink ASC file and return fixations as a long-format tibble}
 \usage{
-asc_to_fixations(filepath, subj = 1L, lowest_cond = 1L, highest_cond = 999L)
+asc_to_fixations(filepath, subj = 1L, lowest_cond = 1L, highest_cond = 999L,
+  trial_pattern = "^[A-Za-z]")
 }
 \arguments{
 \item{filepath}{Path to the EyeLink ASC file.}
@@ -14,6 +15,10 @@ asc_to_fixations(filepath, subj = 1L, lowest_cond = 1L, highest_cond = 999L)
 \item{lowest_cond}{Minimum condition number to include (default 1).}
 
 \item{highest_cond}{Maximum condition number to include (default 999).}
+
+\item{trial_pattern}{Regular expression applied to the trial-ID token to
+select which trials to include (default \code{"^[A-Za-z]"}).  Passed to
+\code{\link{read_asc}}.}
 }
 \value{
 A \code{\link[tibble]{tibble}} with one row per fixation and
