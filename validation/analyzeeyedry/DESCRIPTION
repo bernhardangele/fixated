@@ -1,0 +1,23 @@
+Package: analyzeeyedry
+Title: Analyze Eye Movement Data Using Eyedry Algorithms
+Version: 0.1.0
+Authors@R: person("Bernhard", "Angele", role = c("aut", "cre"), email = "b.angele@bournemouth.ac.uk")
+Description: Reads ASC files from EyeLink eye trackers and DA1 files produced by
+    Robodoc.py, and computes fixation time measures using the exact computational
+    algorithms from the eyedry program (Clifton, 1990). Produces gaze duration,
+    total time, first fixation, regressions in/out, go-past time, and other
+    standard reading time measures in a wide-format tibble compatible with the
+    IXS output format. Includes both a single-call interface (analyze_eyedry)
+    and a step-by-step workflow: extract_regions_from_script reads region
+    boundaries from a delimited script file; asc_to_fixations converts an ASC
+    file to a long-format fixation tibble; assign_regions_to_fixations assigns
+    analysis regions to fixations; compute_fixation_measures calculates all
+    standard reading-time measures.
+License: GPL-3
+Encoding: UTF-8
+Imports:
+    tibble
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+RoxygenNote: 7.3.3
