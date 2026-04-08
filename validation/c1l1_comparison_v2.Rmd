@@ -1,0 +1,661 @@
+---
+title: "Validation v2: fixated (with new parameters) vs. analyzeeyedry on C1L1.asc"
+author: "Auto-generated validation report"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# 1. Introduction
+
+This document documents the impact of the changes introduced in the
+`fixated` package to bring it closer to the **analyzeeyedry** / eyedry
+convention:
+
+1. **`shorttime` parameter** – fixations ≤ shorttime ms are excluded from
+   FFD/GD/GPT (but TVT still sums all fixations).
+2. **Fixed GD first-pass scan** – short fixations outside the word no longer
+   terminate the first-pass scan (they are skipped instead).
+3. **`longtime` parameter** – a fixation > longtime on a word causes its
+   FFD/GD/GPT/`sp` to be set to `NA`.
+4. **`ttcutoff` parameter** – TVT is set to `NA` when cumulative time exceeds
+   the cutoff.
+5. **`truncate_at_display_on` parameter** – straddling fixations are truncated
+   instead of excluded.
+6. **New regression measures** – `oreg`, `ireg`, `pfix`, `nfix`, `sp` are now
+   computed.
+
+The comparison is run on `C1L1.asc`, the same UMass EyeTrack file used in
+`c1l1_comparison.Rmd`.
+
+---
+
+# 2. Setup
+
+```{r packages}
+pkg_root          <- file.path(getwd(), "..")
+analyzeeyedry_dir <- file.path(getwd(), "analyzeeyedry")
+
+if (!requireNamespace("analyzeeyedry", quietly = TRUE)) {
+  install.packages(analyzeeyedry_dir, repos = NULL, type = "source")
+}
+if (!requireNamespace("fixated", quietly = TRUE)) {
+  install.packages(pkg_root, repos = NULL, type = "source")
+}
+
+library(analyzeeyedry)
+library(fixated)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(knitr)
+
+ASC_FILE <- file.path(pkg_root, "data_to_incorporate", "C1L1.asc")
+stopifnot(file.exists(ASC_FILE))
+cat("ASC file:", ASC_FILE, "\n")
+```
+
+---
+
+# 3. Parse C1L1.asc (shared helper)
+
+The parsing helpers below are identical to those in `c1l1_comparison.Rmd`.
+
+```{r parse-helpers}
+parse_c1l1 <- function(filepath, trial_pattern = "^[A-Za-z]") {
+  lines <- readLines(filepath, warn = FALSE)
+  trial_list <- list()
+  in_trial   <- FALSE
+  seq_n      <- 0L
+  cond <- NA_integer_; item <- NA_integer_; tid <- ""
+  prefix <- ""; synctime <- NA_real_
+  chars_list <- list(); fix_list <- list()
+
+  for (line in lines) {
+    if (grepl("MSG\\s.*TRIALID\\s+(\\S+)", line)) {
+      m_tid <- regmatches(line, regexpr("TRIALID\\s+(\\S+)", line))
+      if (length(m_tid) > 0L) {
+        trial_id <- sub("TRIALID\\s+", "", m_tid)
+        if (grepl(trial_pattern, trial_id)) {
+          m <- regmatches(trial_id, regexpr("^([A-Za-z]+)(\\d+)[A-Za-z](\\d+)", trial_id))
+          if (length(m) > 0L) {
+            nums <- regmatches(m, gregexpr("\\d+", m))[[1L]]
+            pfx  <- regmatches(m, gregexpr("[A-Za-z]+", m))[[1L]][1L]
+            if (length(nums) >= 2L) {
+              seq_n <- seq_n + 1L; cond <- as.integer(nums[1L])
+              item  <- as.integer(nums[2L]); tid <- trial_id; prefix <- pfx
+              synctime <- NA_real_; chars_list <- list(); fix_list <- list()
+              in_trial <- TRUE
+            }
+          }
+        } else { in_trial <- FALSE }
+      }
+      next
+    }
+    if (!in_trial) next
+    if (grepl("REGION CHAR", line)) {
+      parts <- strsplit(trimws(line), "\\s+")[[1L]]
+      np    <- length(parts)
+      if (np >= 10L) {
+        idx <- as.integer(parts[5L])
+        ch  <- if (np >= 11L) parts[7L] else " "
+        x_l <- as.numeric(parts[np - 3L]); y_t <- as.numeric(parts[np - 2L])
+        x_r <- as.numeric(parts[np - 1L]); y_b <- as.numeric(parts[np])
+        chars_list[[length(chars_list) + 1L]] <-
+          data.frame(idx = idx, char = ch,
+                     x_left = x_l, y_top = y_t, x_right = x_r, y_bottom = y_b,
+                     stringsAsFactors = FALSE)
+      }
+      next
+    }
+    if (grepl("SYNCTIME", line)) {
+      parts <- strsplit(trimws(line), "\\s+")[[1L]]
+      if (length(parts) >= 2L) synctime <- as.numeric(parts[2L])
+      next
+    }
+    if (grepl("^EFIX\\s+R", line)) {
+      parts <- strsplit(trimws(line), "\\s+")[[1L]]
+      if (length(parts) >= 7L) {
+        fix_list[[length(fix_list) + 1L]] <- data.frame(
+          t_start = as.numeric(parts[3L]), t_end = as.numeric(parts[4L]),
+          duration = as.numeric(parts[5L]),
+          x = as.numeric(parts[6L]), y = as.numeric(parts[7L]),
+          stringsAsFactors = FALSE)
+      }
+      next
+    }
+    if (grepl("TRIAL_RESULT", line)) {
+      if (in_trial && length(chars_list) > 0L) {
+        chars_df <- do.call(rbind, chars_list)
+        chars_df <- chars_df[order(chars_df$idx), ]
+        fix_df   <- if (length(fix_list) > 0L) do.call(rbind, fix_list) else
+          data.frame(t_start = numeric(), t_end = numeric(),
+                     duration = numeric(), x = numeric(), y = numeric())
+        trial_list[[length(trial_list) + 1L]] <- list(
+          trial_id = tid, prefix = prefix, cond = cond, item = item,
+          seq = seq_n, synctime = synctime,
+          chars = chars_df, fixations = fix_df)
+      }
+      in_trial <- FALSE; next
+    }
+  }
+  trial_list
+}
+
+build_word_rois <- function(chars_df) {
+  n <- nrow(chars_df)
+  if (n == 0L) return(data.frame())
+  word_start_char_idx <- integer(0)
+  for (ci in seq_len(n)) {
+    if (ci == 1L) {
+      word_start_char_idx <- c(word_start_char_idx, ci)
+    } else if (chars_df$char[ci - 1L] == " " && chars_df$char[ci] != " ") {
+      word_start_char_idx <- c(word_start_char_idx, ci)
+    }
+  }
+  nw <- length(word_start_char_idx)
+  if (nw == 0L) return(data.frame())
+  word_end_char_idx <- c(word_start_char_idx[-1L] - 1L, n)
+  rois <- vector("list", nw)
+  for (w in seq_len(nw)) {
+    rows   <- word_start_char_idx[w]:word_end_char_idx[w]
+    x_s    <- chars_df$x_left[word_start_char_idx[w]]
+    x_e    <- chars_df$x_right[word_end_char_idx[w]]
+    y_s    <- min(chars_df$y_top[rows])
+    y_e    <- max(chars_df$y_bottom[rows])
+    word_str <- paste(chars_df$char[word_start_char_idx[w]:
+                                      word_end_char_idx[w]], collapse = "")
+    rois[[w]] <- data.frame(
+      word_id = w, word = word_str,
+      x_start = x_s, x_end = x_e, y_start = y_s, y_end = y_e,
+      char_start_idx = chars_df$idx[word_start_char_idx[w]],
+      char_end_idx   = chars_df$idx[word_end_char_idx[w]],
+      stringsAsFactors = FALSE)
+  }
+  do.call(rbind, rois)
+}
+
+trial_list <- parse_c1l1(ASC_FILE)
+for (ti in seq_along(trial_list)) {
+  trial_list[[ti]]$word_rois <- build_word_rois(trial_list[[ti]]$chars)
+}
+cat(sprintf("Parsed %d trials\n", length(trial_list)))
+```
+
+---
+
+# 4. analyzeeyedry reference analysis
+
+```{r eyedry-analysis}
+word_regions_edry <- asc_to_cnt(
+  ASC_FILE, trial_pattern = "^[A-Za-z]",
+  spillover_gap = 1L, spillover_size = 20L)
+fix_edry   <- asc_to_fixations(ASC_FILE, subj = 1L, trial_pattern = "^[A-Za-z]")
+fix_edry_r <- assign_regions_to_fixations(fix_edry, word_regions_edry)
+nregmax_val <- max(word_regions_edry$nreg, na.rm = TRUE)
+
+measures_edry <- compute_fixation_measures(
+  fix_edry_r, word_regions_edry,
+  shorttime = 80L, longtime = 800L, nregmax = nregmax_val)
+cat(sprintf("analyzeeyedry: measures for %d trials\n", nrow(measures_edry)))
+```
+
+---
+
+# 5. fixated analysis (v2 — with new parameters)
+
+Build tidy inputs (SYNCTIME-truncate filter to mirror analyzeeyedry):
+
+```{r build-inputs}
+build_fixated_inputs <- function(tl, onset_filter = "synctime_truncate") {
+  fix_rows <- list(); roi_rows <- list()
+  for (ti in seq_along(tl)) {
+    tr <- tl[[ti]]
+    fix_df <- tr$fixations; rois <- tr$word_rois
+    if (nrow(fix_df) == 0L || nrow(rois) == 0L) next
+    st_val <- tr$synctime
+    if (onset_filter == "synctime_truncate" && !is.na(st_val)) {
+      fix_df <- fix_df[fix_df$t_end > st_val, , drop = FALSE]
+      straddle <- !is.na(fix_df$t_start) & fix_df$t_start <= st_val
+      if (any(straddle)) {
+        fix_df$t_start[straddle]  <- st_val
+        fix_df$duration[straddle] <- fix_df$t_end[straddle] - st_val
+      }
+    }
+    if (nrow(fix_df) == 0L) next
+    for (fi in seq_len(nrow(fix_df))) {
+      fix_rows[[length(fix_rows) + 1L]] <- data.frame(
+        trial_nr   = ti, cond = tr$cond, item = tr$item,
+        start_time = fix_df$t_start[fi], end_time = fix_df$t_end[fi],
+        duration   = fix_df$duration[fi],
+        avg_x = fix_df$x[fi], avg_y = fix_df$y[fi], stringsAsFactors = FALSE)
+    }
+    rois$trial_nr <- ti; rois$cond <- tr$cond; rois$item <- tr$item
+    roi_rows[[length(roi_rows) + 1L]] <- rois
+  }
+  list(
+    fixations = if (length(fix_rows) > 0L) dplyr::as_tibble(do.call(rbind, fix_rows)) else dplyr::tibble(),
+    roi       = if (length(roi_rows) > 0L) dplyr::as_tibble(do.call(rbind, roi_rows)) else dplyr::tibble()
+  )
+}
+
+inp <- build_fixated_inputs(trial_list, onset_filter = "synctime_truncate")
+cat("fixated input:", nrow(inp$fixations), "fixations across",
+    dplyr::n_distinct(inp$fixations$trial_nr), "trials\n")
+```
+
+Compute measures **without** new parameters (baseline, same as v1):
+
+```{r fixated-v1}
+measures_fix_v1 <- compute_eye_measures(
+  inp$fixations, inp$roi, trial_col = "trial_nr")
+cat("fixated v1: measures computed\n")
+```
+
+Compute measures **with** new parameters (`shorttime=80`, `longtime=800`,
+`ttcutoff=4000`):
+
+```{r fixated-v2}
+measures_fix_v2 <- compute_eye_measures(
+  inp$fixations, inp$roi, trial_col = "trial_nr",
+  shorttime = 80L, longtime = 800L, ttcutoff = 4000L)
+cat("fixated v2: measures computed with shorttime=80, longtime=800, ttcutoff=4000\n")
+```
+
+---
+
+# 6. Reshape analyzeeyedry to long format
+
+```{r reshape-edry}
+trial_key <- dplyr::tibble(
+  trial_nr = seq_along(trial_list),
+  cond     = sapply(trial_list, `[[`, "cond"),
+  item     = sapply(trial_list, `[[`, "item"))
+
+pivot_edry_long <- function(wide_df, trial_key, measures = c("ff","fp","tt","gp","oreg","ireg","pfix","nfix","sp")) {
+  meas_pat <- paste0("^(", paste(measures, collapse="|"), ")_R\\d+$")
+  meas_cols <- names(wide_df)[grepl(meas_pat, names(wide_df))]
+  long <- wide_df |>
+    tidyr::pivot_longer(cols = dplyr::all_of(meas_cols),
+                        names_to = c("measure","word_id"),
+                        names_pattern = "^(.+)_R(\\d+)$",
+                        values_to = "value") |>
+    dplyr::mutate(word_id = as.integer(word_id)) |>
+    tidyr::pivot_wider(names_from = measure, values_from = value) |>
+    dplyr::rename(ffd=ff, gd=fp, tvt=tt, gpt=gp) |>
+    dplyr::left_join(trial_key, by = c("cond", "item"))
+  long
+}
+
+edry_long <- pivot_edry_long(measures_edry, trial_key)
+cat("analyzeeyedry long format:", nrow(edry_long), "rows\n")
+```
+
+---
+
+# 7. Merge and compare
+
+```{r merge}
+compare <- edry_long |>
+  dplyr::select(trial_nr, cond, item, word_id,
+                ffd_edry=ffd, gd_edry=gd, gpt_edry=gpt, tvt_edry=tvt,
+                oreg_edry=oreg, ireg_edry=ireg, pfix_edry=pfix,
+                nfix_edry=nfix, sp_edry=sp) |>
+  dplyr::inner_join(
+    measures_fix_v1 |>
+      dplyr::select(trial_nr, word_id,
+                    ffd_v1=ffd, gd_v1=gd, gpt_v1=gpt, tvt_v1=tvt),
+    by = c("trial_nr","word_id")) |>
+  dplyr::inner_join(
+    measures_fix_v2 |>
+      dplyr::select(trial_nr, word_id,
+                    ffd_v2=ffd, gd_v2=gd, gpt_v2=gpt, tvt_v2=tvt,
+                    oreg_v2=oreg, ireg_v2=ireg, pfix_v2=pfix,
+                    nfix_v2=nfix, sp_v2=sp),
+    by = c("trial_nr","word_id")) |>
+  dplyr::arrange(trial_nr, word_id)
+
+cat(sprintf("Comparison table: %d rows\n", nrow(compare)))
+```
+
+---
+
+# 8. Impact of new parameters
+
+## 8.1 Helper function
+
+```{r helper}
+agree_stats <- function(df, edry_col, fix_col) {
+  d <- df[[fix_col]] - df[[edry_col]]
+  n_both  <- sum(!is.na(df[[edry_col]]) & !is.na(df[[fix_col]]))
+  n_agree <- sum(abs(d) < 1, na.rm = TRUE)
+  n_only_edry <- sum(!is.na(df[[edry_col]]) & is.na(df[[fix_col]]))
+  n_only_fix  <- sum(is.na(df[[edry_col]]) & !is.na(df[[fix_col]]))
+  data.frame(
+    edry_col    = edry_col,
+    fix_col     = fix_col,
+    n_both      = n_both,
+    n_agree     = n_agree,
+    pct_agree   = round(100 * n_agree / max(n_both, 1), 1),
+    mean_abs_diff = round(mean(abs(d), na.rm = TRUE), 1),
+    n_only_edry = n_only_edry,
+    n_only_fix  = n_only_fix
+  )
+}
+```
+
+## 8.2 First Fixation Duration (FFD)
+
+```{r ffd}
+stats_ffd <- dplyr::bind_rows(
+  agree_stats(compare, "ffd_edry", "ffd_v1"),
+  agree_stats(compare, "ffd_edry", "ffd_v2")
+)
+knitr::kable(stats_ffd, caption = "FFD: v1 (no filter) vs v2 (shorttime+longtime)")
+
+ffd_plot <- compare |>
+  dplyr::filter(!is.na(ffd_edry)) |>
+  dplyr::select(ffd_edry, ffd_v1, ffd_v2) |>
+  tidyr::pivot_longer(cols = c(ffd_v1, ffd_v2), names_to = "version",
+                      values_to = "ffd_fix") |>
+  dplyr::mutate(diff = ffd_fix - ffd_edry,
+                status = ifelse(abs(diff) < 1, "agree", "disagree"))
+
+ggplot(ffd_plot |> dplyr::filter(!is.na(ffd_fix)),
+       aes(x = ffd_edry, y = ffd_fix, colour = status)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_point(alpha = 0.4, size = 0.8) +
+  facet_wrap(~version) +
+  labs(title = "FFD: analyzeeyedry vs fixated",
+       x = "analyzeeyedry ff (ms)", y = "fixated ffd (ms)") +
+  theme_bw()
+```
+
+## 8.3 Gaze Duration (GD)
+
+```{r gd}
+stats_gd <- dplyr::bind_rows(
+  agree_stats(compare, "gd_edry", "gd_v1"),
+  agree_stats(compare, "gd_edry", "gd_v2")
+)
+knitr::kable(stats_gd, caption = "GD: v1 vs v2")
+
+gd_plot <- compare |>
+  dplyr::filter(!is.na(gd_edry)) |>
+  dplyr::select(gd_edry, gd_v1, gd_v2) |>
+  tidyr::pivot_longer(cols = c(gd_v1, gd_v2), names_to = "version",
+                      values_to = "gd_fix") |>
+  dplyr::mutate(diff = gd_fix - gd_edry,
+                status = ifelse(abs(diff) < 1, "agree", "disagree"))
+
+ggplot(gd_plot |> dplyr::filter(!is.na(gd_fix)),
+       aes(x = gd_edry, y = gd_fix, colour = status)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_point(alpha = 0.4, size = 0.8) +
+  facet_wrap(~version) +
+  labs(title = "GD: analyzeeyedry vs fixated",
+       x = "analyzeeyedry fp (ms)", y = "fixated gd (ms)") +
+  theme_bw()
+```
+
+## 8.4 Go-Past Time (GPT)
+
+```{r gpt}
+stats_gpt <- dplyr::bind_rows(
+  agree_stats(compare, "gpt_edry", "gpt_v1"),
+  agree_stats(compare, "gpt_edry", "gpt_v2")
+)
+knitr::kable(stats_gpt, caption = "GPT: v1 vs v2")
+```
+
+## 8.5 Total Viewing Time (TVT)
+
+```{r tvt}
+stats_tvt <- dplyr::bind_rows(
+  agree_stats(compare, "tvt_edry", "tvt_v1"),
+  agree_stats(compare, "tvt_edry", "tvt_v2")
+)
+knitr::kable(stats_tvt, caption = "TVT: v1 vs v2")
+```
+
+## 8.6 All measures summary
+
+```{r summary-all}
+stats_all <- dplyr::bind_rows(
+  agree_stats(compare, "ffd_edry", "ffd_v1"),
+  agree_stats(compare, "ffd_edry", "ffd_v2"),
+  agree_stats(compare, "gd_edry",  "gd_v1"),
+  agree_stats(compare, "gd_edry",  "gd_v2"),
+  agree_stats(compare, "gpt_edry", "gpt_v1"),
+  agree_stats(compare, "gpt_edry", "gpt_v2"),
+  agree_stats(compare, "tvt_edry", "tvt_v1"),
+  agree_stats(compare, "tvt_edry", "tvt_v2")
+)
+knitr::kable(stats_all,
+             caption = "Overall agreement statistics: v1 (no filter) vs v2 (shorttime=80, longtime=800, ttcutoff=4000)")
+```
+
+---
+
+# 9. New regression measures (v2 only)
+
+These measures are new in v2 and have no equivalent in v1.
+
+```{r regression-measures}
+# Regression-out rate
+oreg_comp <- compare |>
+  dplyr::filter(!is.na(oreg_edry) | !is.na(oreg_v2))
+
+cat("oreg agreement:\n")
+print(table(
+  edry = as.character(oreg_comp$oreg_edry),
+  fixated_v2 = as.character(oreg_comp$oreg_v2),
+  useNA = "ifany"
+))
+
+# Regression-in rate
+ireg_comp <- compare |>
+  dplyr::filter(!is.na(ireg_edry) | !is.na(ireg_v2))
+
+cat("\nireg agreement:\n")
+print(table(
+  edry = as.character(ireg_comp$ireg_edry),
+  fixated_v2 = as.character(ireg_comp$ireg_v2),
+  useNA = "ifany"
+))
+
+# pfix
+pfix_comp <- compare |>
+  dplyr::filter(!is.na(pfix_edry) | !is.na(pfix_v2))
+
+cat("\npfix agreement:\n")
+print(table(
+  edry = as.character(pfix_comp$pfix_edry),
+  fixated_v2 = as.character(pfix_comp$pfix_v2),
+  useNA = "ifany"
+))
+
+# nfix
+nfix_comp <- compare |>
+  dplyr::filter(!is.na(nfix_edry) | !is.na(nfix_v2))
+
+cat("\nnfix agreement:\n")
+print(table(
+  edry = as.character(nfix_comp$nfix_edry),
+  fixated_v2 = as.character(nfix_comp$nfix_v2),
+  useNA = "ifany"
+))
+
+# sp
+cat("\nsp agreement summary:\n")
+print(agree_stats(compare, "sp_edry", "sp_v2"))
+```
+
+---
+
+# 10. Regression measures: visualisations
+
+```{r regression-plots}
+# oreg accuracy
+oreg_both <- compare |>
+  dplyr::filter(!is.na(oreg_edry), !is.na(oreg_v2)) |>
+  dplyr::mutate(match = oreg_edry == oreg_v2)
+cat(sprintf("oreg accuracy: %.1f%% (%d/%d)\n",
+            100 * mean(oreg_both$match), sum(oreg_both$match), nrow(oreg_both)))
+
+# ireg accuracy
+ireg_both <- compare |>
+  dplyr::filter(!is.na(ireg_edry), !is.na(ireg_v2)) |>
+  dplyr::mutate(match = ireg_edry == ireg_v2)
+cat(sprintf("ireg accuracy: %.1f%% (%d/%d)\n",
+            100 * mean(ireg_both$match), sum(ireg_both$match), nrow(ireg_both)))
+
+# pfix
+pfix_both <- compare |>
+  dplyr::filter(!is.na(pfix_edry), !is.na(pfix_v2)) |>
+  dplyr::mutate(match = pfix_edry == pfix_v2)
+cat(sprintf("pfix accuracy: %.1f%% (%d/%d)\n",
+            100 * mean(pfix_both$match), sum(pfix_both$match), nrow(pfix_both)))
+
+# nfix
+nfix_both <- compare |>
+  dplyr::filter(!is.na(nfix_edry), !is.na(nfix_v2)) |>
+  dplyr::mutate(match = nfix_edry == nfix_v2)
+cat(sprintf("nfix accuracy: %.1f%% (%d/%d)\n",
+            100 * mean(nfix_both$match), sum(nfix_both$match), nrow(nfix_both)))
+```
+
+---
+
+# 11. Effect of `shorttime` on GD: case-by-case
+
+```{r gd-shorttime-effect}
+gd_change <- compare |>
+  dplyr::filter(!is.na(gd_edry)) |>
+  dplyr::mutate(
+    diff_v1 = gd_v1 - gd_edry,
+    diff_v2 = gd_v2 - gd_edry,
+    improved = abs(diff_v2) < abs(diff_v1) | (is.na(diff_v1) & !is.na(diff_v2))
+  )
+
+cat(sprintf("GD cases where v2 is closer to analyzeeyedry than v1: %d / %d (%.1f%%)\n",
+            sum(gd_change$improved, na.rm = TRUE),
+            sum(!is.na(gd_change$diff_v1) | !is.na(gd_change$diff_v2)),
+            100 * mean(gd_change$improved, na.rm = TRUE)))
+
+cat(sprintf("Mean |diff| v1: %.2f ms;  v2: %.2f ms\n",
+            mean(abs(gd_change$diff_v1), na.rm = TRUE),
+            mean(abs(gd_change$diff_v2), na.rm = TRUE)))
+```
+
+---
+
+# 12. Effect of `truncate_at_display_on`
+
+```{r truncate-effect}
+# Build inputs with strict filter (same as v1 baseline), then compare GD
+build_fixated_inputs_strict <- function(tl) {
+  fix_rows <- list(); roi_rows <- list()
+  for (ti in seq_along(tl)) {
+    tr <- tl[[ti]]
+    fix_df <- tr$fixations; rois <- tr$word_rois
+    if (nrow(fix_df) == 0L || nrow(rois) == 0L) next
+    st_val <- tr$synctime
+    if (!is.na(st_val)) {
+      fix_df <- fix_df[fix_df$t_start > st_val, , drop = FALSE]
+    }
+    if (nrow(fix_df) == 0L) next
+    for (fi in seq_len(nrow(fix_df))) {
+      fix_rows[[length(fix_rows) + 1L]] <- data.frame(
+        trial_nr = ti, cond = tr$cond, item = tr$item,
+        start_time = fix_df$t_start[fi], end_time = fix_df$t_end[fi],
+        duration = fix_df$duration[fi],
+        avg_x = fix_df$x[fi], avg_y = fix_df$y[fi], stringsAsFactors = FALSE)
+    }
+    rois$trial_nr <- ti; rois$cond <- tr$cond; rois$item <- tr$item
+    roi_rows[[length(roi_rows) + 1L]] <- rois
+  }
+  list(
+    fixations = if (length(fix_rows) > 0L) dplyr::as_tibble(do.call(rbind, fix_rows)) else dplyr::tibble(),
+    roi       = if (length(roi_rows) > 0L) dplyr::as_tibble(do.call(rbind, roi_rows)) else dplyr::tibble()
+  )
+}
+
+inp_strict <- build_fixated_inputs_strict(trial_list)
+measures_strict <- compute_eye_measures(
+  inp_strict$fixations, inp_strict$roi, trial_col = "trial_nr",
+  shorttime = 80L, longtime = 800L, ttcutoff = 4000L)
+
+cat("Number of fixations: strict =", nrow(inp_strict$fixations),
+    "  truncate =", nrow(inp$fixations), "\n")
+
+# Compare GD with strict vs truncate
+gd_trunc_vs_strict <- edry_long |>
+  dplyr::select(trial_nr, word_id, gd_edry = gd) |>
+  dplyr::inner_join(
+    measures_fix_v2 |> dplyr::select(trial_nr, word_id, gd_trunc = gd),
+    by = c("trial_nr","word_id")) |>
+  dplyr::inner_join(
+    measures_strict |> dplyr::select(trial_nr, word_id, gd_strict = gd),
+    by = c("trial_nr","word_id"))
+
+cat("\nGD agreement with analyzeeyedry:\n")
+cat(sprintf("  truncate filter (v2): %.2f ms mean |diff|\n",
+            mean(abs(gd_trunc_vs_strict$gd_trunc - gd_trunc_vs_strict$gd_edry), na.rm=TRUE)))
+cat(sprintf("  strict filter:        %.2f ms mean |diff|\n",
+            mean(abs(gd_trunc_vs_strict$gd_strict - gd_trunc_vs_strict$gd_edry), na.rm=TRUE)))
+```
+
+---
+
+# 13. Summary of improvements
+
+```{r improvements-summary}
+# Build a clean summary table
+improvements <- dplyr::tibble(
+  measure    = c("FFD", "GD", "GPT", "TVT"),
+  pct_v1     = c(
+    agree_stats(compare, "ffd_edry", "ffd_v1")$pct_agree,
+    agree_stats(compare, "gd_edry",  "gd_v1")$pct_agree,
+    agree_stats(compare, "gpt_edry", "gpt_v1")$pct_agree,
+    agree_stats(compare, "tvt_edry", "tvt_v1")$pct_agree
+  ),
+  pct_v2     = c(
+    agree_stats(compare, "ffd_edry", "ffd_v2")$pct_agree,
+    agree_stats(compare, "gd_edry",  "gd_v2")$pct_agree,
+    agree_stats(compare, "gpt_edry", "gpt_v2")$pct_agree,
+    agree_stats(compare, "tvt_edry", "tvt_v2")$pct_agree
+  ),
+  mad_v1     = c(
+    agree_stats(compare, "ffd_edry", "ffd_v1")$mean_abs_diff,
+    agree_stats(compare, "gd_edry",  "gd_v1")$mean_abs_diff,
+    agree_stats(compare, "gpt_edry", "gpt_v1")$mean_abs_diff,
+    agree_stats(compare, "tvt_edry", "tvt_v1")$mean_abs_diff
+  ),
+  mad_v2     = c(
+    agree_stats(compare, "ffd_edry", "ffd_v2")$mean_abs_diff,
+    agree_stats(compare, "gd_edry",  "gd_v2")$mean_abs_diff,
+    agree_stats(compare, "gpt_edry", "gpt_v2")$mean_abs_diff,
+    agree_stats(compare, "tvt_edry", "tvt_v2")$mean_abs_diff
+  )
+) |>
+  dplyr::mutate(
+    delta_pct = pct_v2 - pct_v1,
+    delta_mad = mad_v2 - mad_v1
+  )
+
+knitr::kable(improvements,
+             col.names = c("Measure", "% Agree (v1)", "% Agree (v2)",
+                           "MAD v1 (ms)", "MAD v2 (ms)",
+                           "Δ% agree", "Δ MAD (ms)"),
+             caption = paste0("Impact of shorttime=80 / longtime=800 / ttcutoff=4000 ",
+                              "on agreement with analyzeeyedry. Positive Δ% = improvement."))
+```

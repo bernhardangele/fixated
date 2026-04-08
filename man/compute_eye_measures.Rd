@@ -10,7 +10,11 @@ compute_eye_measures(
   trial_col = "trial_nr",
   eye_col = "eye",
   include_word_col = TRUE,
-  trial_db = NULL
+  trial_db = NULL,
+  shorttime = NULL,
+  longtime = NULL,
+  ttcutoff = NULL,
+  truncate_at_display_on = FALSE
 )
 }
 \arguments{
@@ -35,17 +39,37 @@ contains a \code{word} column, attach it to the output.  Defaults to \code{TRUE}
 
 \item{trial_db}{A data frame (e.g. the \code{trial_db} element returned by
 \code{\link[=read_asc]{read_asc()}}) with columns named by \code{trial_col}, \code{t_display_on}, and
-\code{t_display_off}.  When supplied, only fixations whose \code{start_time} is
-\strong{strictly after} \code{t_display_on} \strong{and} whose \code{end_time} is \strong{strictly
-before} \code{t_display_off} are retained for each trial.  \code{NA} values in
-\code{t_display_on} or \code{t_display_off} disable the respective bound for that
-trial.  Defaults to \code{NULL} (no filtering).}
+\code{t_display_off}.  When supplied, fixations are filtered to the display
+window for each trial (see \code{truncate_at_display_on} for details).  \code{NA}
+values in \code{t_display_on} or \code{t_display_off} disable the respective bound
+for that trial.  Defaults to \code{NULL} (no filtering).}
+
+\item{shorttime}{Numeric scalar or \code{NULL}.  If non-\code{NULL}, fixations with
+\code{duration <= shorttime} (ms) are skipped for FFD, GD, and GPT
+computations and do not terminate the first-pass scan when they fall
+outside the word's boundaries.  They are still included in TVT.
+Defaults to \code{NULL} (no short-fixation filtering).}
+
+\item{longtime}{Numeric scalar or \code{NULL}.  If non-\code{NULL}, encountering a
+fixation with \code{duration > longtime} (ms) on the word causes FFD, GD, GPT,
+and \code{sp} to be set to \code{NA} for that word.  TVT accumulation stops at the
+first \code{longtime} fixation but retains previously accumulated time.
+Defaults to \code{NULL} (no long-fixation filtering).}
+
+\item{ttcutoff}{Numeric scalar or \code{NULL}.  If non-\code{NULL} and \code{longtime} is
+also set, TVT is set to \code{NA} when its cumulative value exceeds \code{ttcutoff}
+(ms).  Defaults to \code{NULL}.}
+
+\item{truncate_at_display_on}{Logical.  When \code{TRUE} and \code{trial_db} is
+supplied, fixations that \emph{straddle} \code{t_display_on} are retained but
+truncated (their \code{start_time} is set to \code{t_display_on} and \code{duration}
+recomputed), rather than being excluded entirely.  Defaults to \code{FALSE}.}
 }
 \value{
 A \link[tibble:tibble]{tibble} with one row per trial × word
 combination (all words from the ROI are included).  Words that received
-no fixations have \code{NA} for \code{ffd}, \code{gd}, \code{gpt}, and \code{tvt}, and
-\code{n_fixations} is set to \code{0L}.  Columns:
+no fixations have \code{NA} for \code{ffd}, \code{gd}, \code{gpt}, \code{tvt}, \code{oreg}, \code{ireg},
+and \code{sp}; \code{n_fixations}, \code{pfix}, and \code{nfix} are set to \code{0L}.  Columns:
 \describe{
 \item{\code{trial}}{Trial identifier.}
 \item{\code{sentence_nr}}{Sentence/item identifier (if available in \code{roi}).}
@@ -58,6 +82,14 @@ the first pass.}
 \item{\code{tvt}}{Total viewing time (ms).}
 \item{\code{n_fixations}}{Total number of fixations on the word (\code{0L} if
 not fixated).}
+\item{\code{oreg}}{Regression out (0/1); \code{NA} if no valid first-pass
+fixation.}
+\item{\code{ireg}}{Regression in (0/1); \code{NA} if the word was never
+fixated.}
+\item{\code{pfix}}{First-pass fixation probability (0/1); \code{0L} if not
+fixated.}
+\item{\code{nfix}}{Number of first-pass fixations; \code{0L} if not fixated.}
+\item{\code{sp}}{Second-pass time (ms); \code{NA} if no second-pass fixations.}
 }
 If \code{eye_col} is present, the \code{eye} column is also included and measures are
 computed per eye.
@@ -68,14 +100,47 @@ computes standard reading-research eye-movement measures for each word in
 each trial.
 \subsection{Measures computed}{\tabular{lcl}{
    Measure \tab Abbreviation \tab Definition \cr
-   First Fixation Duration \tab FFD \tab Duration of the \emph{first} fixation that lands on the word during the first pass (a single fixation that lands on the word and is not preceded by a fixation on a later word). \cr
-   Gaze Duration \tab GD \tab Sum of all fixation durations during the first pass through the word (from first entry until the gaze exits the word for the first time). \cr
-   Go-Past Time \tab GPT \tab Time from when the eye first enters the word until it first exits to the \emph{right} of the word (includes regressive fixations to earlier words). Also called \emph{regression-path duration}. \cr
+   First Fixation Duration \tab FFD \tab Duration of the \emph{first} valid fixation that lands on the word during the first pass. \cr
+   Gaze Duration \tab GD \tab Sum of all valid fixation durations during the first pass through the word (from first entry until the gaze exits to the right or regresses left). \cr
+   Go-Past Time \tab GPT \tab Time from when the eye first enters the word until it first exits to the \emph{right} (includes regressive fixations to earlier words). Also called \emph{regression-path duration}. \cr
    Total Viewing Time \tab TVT \tab Sum of all fixation durations on the word across the entire trial (all passes). \cr
+   Regression Out \tab oreg \tab \code{1} if a first-pass fixation on the word was immediately followed by a regression back past the left boundary; \code{0} otherwise; \code{NA} if no valid first-pass fixation. \cr
+   Regression In \tab ireg \tab \code{1} if any fixation on the word arrived from a position to the right of the word's right boundary; \code{0} otherwise; \code{NA} if the word was never fixated. \cr
+   First-pass fixation probability \tab pfix \tab \code{1} if the word received at least one valid first-pass fixation; \code{0} otherwise. \cr
+   First-pass fixation count \tab nfix \tab Number of valid fixations on the word before the gaze first leaves the word during the first pass. \cr
+   Second-pass time \tab sp \tab Sum of fixation durations on the word after the gaze first exits to the right (second and later passes). \cr
 }
 
+}
 
-Fixations not falling within any ROI are assigned \code{word_id = NA}.
+\subsection{Duration filtering (\code{shorttime} / \code{longtime})}{
+
+When \code{shorttime} is set, fixations with \code{duration <= shorttime} are treated
+as saccadic artefacts: they are \strong{skipped} (not accumulated) for FFD, GD,
+and GPT, and they do \strong{not} end the first-pass scan when they fall outside
+the word's boundaries.  This matches the \emph{eyedry} / Robodoc convention.
+TVT includes all fixations regardless of \code{shorttime}.
+
+When \code{longtime} is set, encountering a fixation with
+\code{duration > longtime} on the word causes FFD, GD, GPT, and \code{sp} to be set
+to \code{NA} (the trial data is discarded for that word).  For TVT, the scan
+stops at a \code{longtime} fixation but any previously accumulated time is
+retained; if \code{ttcutoff} is also set and the accumulated TVT exceeds it, TVT
+is set to \code{NA}.
+}
+
+\subsection{Display-onset filtering (\code{trial_db} / \code{truncate_at_display_on})}{
+
+When \code{trial_db} is supplied, fixations are filtered to the display window
+before measures are computed.  The default behaviour (\code{truncate_at_display_on = FALSE}) \strong{excludes} fixations whose \code{start_time} is at or before
+\code{t_display_on} (strict filter).  This means a fixation that \emph{straddles} the
+display onset (started before but ended after it) is dropped entirely.
+
+Setting \code{truncate_at_display_on = TRUE} mirrors the \emph{eyedry} / UMass
+EyeTrack convention: fixations whose \code{end_time} is after \code{t_display_on} are
+retained, and those that straddle the onset have their \code{start_time} set to
+\code{t_display_on} and their \code{duration} recomputed accordingly.  This typically
+retains one additional fixation per trial.
 }
 }
 \examples{
