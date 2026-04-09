@@ -10,13 +10,17 @@
 #'
 #' * **Trial structure** is delimited by `MSG … TRIALID <id>` at the start
 #'   and `MSG … TRIAL_RESULT` at the end.
-#' * **TRIALID** encodes the condition and item numbers in the format
-#'   `[prefix][cond]I[item]D[n]` (e.g., `P1I3D0`).
+#' * **TRIALID** encodes condition and item numbers in the format
+#'   `[prefix][cond][letter][item]…` (e.g., `P1I3D0`).  Only the leading
+#'   alphabetic prefix, the condition number, the single separator letter, and
+#'   the item number are parsed; any trailing suffix (e.g., `D0`) is ignored.
 #' * **Display onset** is recorded as `MSG … SYNCTIME`, which immediately
 #'   follows `MSG … DISPLAY ON`.
 #' * **Word ROIs** are specified at the character level via
 #'   `MSG … REGION CHAR <idx> <line> <char> <x_l> <y_t> <x_r> <y_b>` messages.
-#'   Adjacent non-space characters are merged into word-level ROIs.
+#'   Adjacent non-space characters are merged into word-level ROIs.  When the
+#'   character token is absent from the line (EyeTrack sometimes omits it for
+#'   space characters) the character is treated as `" "`.
 #' * Only the **right eye** (`EFIX R`) fixation events are used.
 #'
 #' @param path Character scalar.  Full path to the EyeTrack `.asc` file.
@@ -89,7 +93,11 @@ read_eyetrack_asc <- function(path, trial_pattern = "^[A-Za-z]") {
       if (length(m_tid) > 0L) {
         trial_id_str <- sub("TRIALID\\s+", "", m_tid)
         if (grepl(trial_pattern, trial_id_str)) {
-          # Parse [prefix][cond][letter][item]
+          # Parse [prefix][cond][separator-letter][item] from TRIALID.
+          # The pattern captures the leading alphabetic prefix, the condition
+          # digit(s), any separating letter (e.g. 'I' in 'P1I3D0'), and the
+          # item digit(s).  The trailing 'D[n]' suffix is intentionally ignored
+          # because only cond and item are needed for downstream analysis.
           m <- regmatches(trial_id_str,
                           regexpr("^([A-Za-z]+)(\\d+)[A-Za-z](\\d+)",
                                   trial_id_str))
@@ -129,6 +137,11 @@ read_eyetrack_asc <- function(path, trial_pattern = "^[A-Za-z]") {
       np    <- length(parts)
       if (np >= 10L) {
         idx  <- as.integer(parts[[5L]])
+        # When the 7th token is absent the character is a literal space, which
+        # EyeTrack sometimes omits from the REGION CHAR line (the space between
+        # words is represented by its bounding box only, without an explicit
+        # character token).  Defaulting to " " preserves the word-segmentation
+        # logic in .build_word_rois_from_chars().
         ch   <- if (np >= 11L) parts[[7L]] else " "
         x_l  <- as.numeric(parts[[np - 3L]])
         y_t  <- as.numeric(parts[[np - 2L]])
