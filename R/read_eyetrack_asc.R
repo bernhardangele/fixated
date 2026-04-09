@@ -47,7 +47,7 @@
 #'
 #' @seealso [compute_eye_measures()], [read_asc()]
 #'
-#' @importFrom dplyr tibble bind_rows
+#' @importFrom dplyr tibble bind_rows as_tibble
 #'
 #' @export
 #'
