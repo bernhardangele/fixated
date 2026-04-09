@@ -409,10 +409,12 @@ compute_eye_measures <- function(
     # ---- GD ----------------------------------------------------------------
     # Sum of valid in-region fixations during first pass.
     # Short fixations outside the region are skipped (don't break first pass).
+    # This matches the eyedry/Robodoc convention: a fixation outside the word
+    # only ends the first pass when its duration > shorttime.
     gd_V <- 0L; gd_NV <- 0L
     for (i in seq_len(n_fix)) {
       if (past_r[i] && !is_sht[i]) break          # non-short rightward exit
-      if (past_l[i] && gd_NV > 0L) break          # leftward regression after entering
+      if (past_l[i] && !is_sht[i] && gd_NV > 0L) break  # non-short leftward regression after entering
       if (in_r[i]) {
         if (is_lng[i]) { gd_V <- 0L; gd_NV <- 0L; break }
         if (is_sht[i]) next
@@ -506,13 +508,14 @@ compute_eye_measures <- function(
 
     # ---- nfix (number of first-pass fixations) -----------------------------
     # Count of non-short fixations on the word before the first exit.
+    # Short fixations outside the word do not end the first pass (eyedry convention).
     nfix_V <- 0L; nfix_entered <- FALSE
     for (i in seq_len(n_fix)) {
       if (past_r[i] && !is_sht[i]) break
       if (in_r[i]) {
         if (!is_sht[i]) { nfix_V <- nfix_V + 1L; nfix_entered <- TRUE }
-      } else if (nfix_entered && past_l[i]) {
-        break                                        # leftward exit after entering
+      } else if (nfix_entered && past_l[i] && !is_sht[i]) {
+        break                                        # non-short leftward exit after entering
       }
     }
     nfix_val <- as.integer(nfix_V)

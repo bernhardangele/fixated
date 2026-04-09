@@ -611,3 +611,81 @@ test_that("sp is NA when there is no second pass", {
   w1 <- result[result$word_id == 1L, ]
   expect_true(is.na(w1$sp))
 })
+
+# ---------------------------------------------------------------------------
+# GD eyedry convention: short fixations left of boundary do not break GD
+# ---------------------------------------------------------------------------
+
+test_that("shorttime: short fixation left of boundary does not end GD first pass", {
+  roi <- make_test_roi()
+  # Sequence: word2 (150ms), short leftward fix on word1 region (50ms, short),
+  #           word2 again (120ms) — should still accumulate into GD for word2
+  fixations <- dplyr::tibble(
+    trial_nr   = 1L,
+    start_time = c(0L,   200L, 300L),
+    end_time   = c(150L, 250L, 420L),
+    duration   = c(150L, 50L,  120L),
+    avg_x      = c(260,  145,  260),   # word2, word1 (left of word2), word2
+    avg_y      = c(400,  400,  400)
+  )
+  # Without shorttime: leftward regression breaks GD → GD=150
+  result_no_st <- compute_eye_measures(fixations, roi)
+  w2_no_st <- result_no_st[result_no_st$word_id == 2L, ]
+  expect_equal(w2_no_st$gd, 150L)
+
+  # With shorttime=80: short leftward fixation is skipped, GD continues to next word2 fix
+  result_st <- compute_eye_measures(fixations, roi, shorttime = 80L)
+  w2_st <- result_st[result_st$word_id == 2L, ]
+  expect_equal(w2_st$gd, 270L)  # 150 + 120
+})
+
+test_that("shorttime: non-short leftward regression still ends GD first pass", {
+  roi <- make_test_roi()
+  # word2 (150ms), non-short regression to word1 (120ms > shorttime=80) — breaks GD
+  fixations <- dplyr::tibble(
+    trial_nr   = 1L,
+    start_time = c(0L,   200L, 400L),
+    end_time   = c(150L, 320L, 550L),
+    duration   = c(150L, 120L, 150L),
+    avg_x      = c(260,  145,  260),   # word2, word1, word2
+    avg_y      = c(400,  400,  400)
+  )
+  result <- compute_eye_measures(fixations, roi, shorttime = 80L)
+  w2 <- result[result$word_id == 2L, ]
+  # non-short leftward regression ends the first pass → GD = 150
+  expect_equal(w2$gd, 150L)
+})
+
+test_that("shorttime: short leftward fixation does not end nfix first pass", {
+  roi <- make_test_roi()
+  # word2 (150ms), short regression to word1 (50ms, short), word2 again (120ms)
+  fixations <- dplyr::tibble(
+    trial_nr   = 1L,
+    start_time = c(0L,   200L, 300L),
+    end_time   = c(150L, 250L, 420L),
+    duration   = c(150L, 50L,  120L),
+    avg_x      = c(260,  145,  260),
+    avg_y      = c(400,  400,  400)
+  )
+  result <- compute_eye_measures(fixations, roi, shorttime = 80L)
+  w2 <- result[result$word_id == 2L, ]
+  # Both word2 fixations (150ms and 120ms) count as first-pass → nfix=2
+  expect_equal(w2$nfix, 2L)
+})
+
+test_that("shorttime: short fixation left of boundary — GD but not leftward gap", {
+  roi <- make_test_roi()
+  # word2 (200ms), then a short fixation at x=50 (far left, past_l for word2),
+  # then word2 again (100ms) — short so should not end first pass
+  fixations <- dplyr::tibble(
+    trial_nr   = 1L,
+    start_time = c(0L,   250L, 360L),
+    end_time   = c(200L, 310L, 460L),
+    duration   = c(200L, 60L,  100L),
+    avg_x      = c(260,  50,   260),
+    avg_y      = c(400,  400,  400)
+  )
+  result <- compute_eye_measures(fixations, roi, shorttime = 80L)
+  w2 <- result[result$word_id == 2L, ]
+  expect_equal(w2$gd, 300L)  # 200 + 100; short fix at x=50 is skipped
+})
