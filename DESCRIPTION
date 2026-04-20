@@ -25,6 +25,7 @@ Suggests:
     testthat (>= 3.0.0),
     base64enc,
     DT,
+    future.apply,
     ggplot2 (>= 3.4.0),
     jpeg,
     knitr,

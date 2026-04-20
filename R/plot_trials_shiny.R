@@ -30,6 +30,8 @@
 #' @details
 #' ## Controls
 #' \describe{
+#'   \item{Subject}{When a `subject` (or `subject_nr`) column is present in the
+#'     provided data, choose which participant to inspect.}
 #'   \item{Trial Number}{Select any trial by its `trial_nr` (or sequential
 #'     index when no `trial_nr` column is present). Use the
 #'     **Previous** / **Next** buttons to step through trials one by one.}
@@ -110,11 +112,26 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
   # ---- mismatch trials check ------------------------------------------------
   .check_trial_mismatch(samples, fixations, rois, measures, trial_db)
 
+  # ---- normalize subject columns --------------------------------------------
+  samples  <- .add_subject_column(samples)
+  fixations <- .add_subject_column(fixations)
+  rois <- .add_subject_column(rois)
+  measures <- .add_subject_column(measures)
+  trial_db <- .add_subject_column(trial_db)
+
   # ---- determine available trials -------------------------------------------
   trial_info    <- .shiny_trial_choices(samples, fixations, rois, measures, trial_db)
-  trial_choices <- trial_info$trial_choices
-  sent_choices  <- trial_info$sentence_choices
+  subject_choices <- trial_info$subject_choices
   mapping       <- trial_info$mapping
+  has_subject_selector <- !is.null(subject_choices)
+  current_subject_value <- if (has_subject_selector) subject_choices[[1L]] else NULL
+  current_mapping <- if (has_subject_selector) {
+    mapping[mapping$subject == current_subject_value, , drop = FALSE]
+  } else {
+    mapping
+  }
+  trial_choices <- .shiny_make_trial_choices(current_mapping)
+  sent_choices <- .shiny_make_sentence_choices(current_mapping)
   
   n_trials      <- length(trial_choices)
   if (n_trials == 0L) {
@@ -127,6 +144,12 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
     shiny::titlePanel("Eye-Tracking Trial Visualisation"),
     shiny::sidebarLayout(
       shiny::sidebarPanel(
+        if (has_subject_selector) {
+          shiny::selectizeInput("subject_sel", "Subject:", choices = subject_choices)
+        } else {
+          NULL
+        },
+        if (has_subject_selector) shiny::hr() else NULL,
         shiny::selectizeInput("trial_sel", "Trial:", choices = trial_choices),
         shiny::actionButton("prevBtn", "Previous"),
         shiny::actionButton("nextBtn", "Next"),
@@ -205,6 +228,22 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
 
   # ---- server -----------------------------------------------------------------
   server <- function(input, output, session) {
+    current_subject <- shiny::reactive({
+      if (has_subject_selector) as.character(input$subject_sel) else NULL
+    })
+
+    mapping_current <- shiny::reactive({
+      if (!has_subject_selector) return(mapping)
+      mapping[mapping$subject == current_subject(), , drop = FALSE]
+    })
+
+    trial_choices_current <- shiny::reactive({
+      .shiny_make_trial_choices(mapping_current())
+    })
+
+    sent_choices_current <- shiny::reactive({
+      .shiny_make_sentence_choices(mapping_current())
+    })
 
     # -- handle trial_db presence ---------------------------------------------
     if (is.null(trial_db)) {
@@ -214,17 +253,30 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
 
     # -- navigation buttons ---------------------------------------------------
     shiny::observeEvent(input$prevBtn, {
-      idx <- match(input$trial_sel, trial_choices)
-      if (idx > 1L) {
-        shiny::updateSelectInput(session, "trial_sel", selected = trial_choices[[idx - 1L]])
+      choices <- trial_choices_current()
+      idx <- match(input$trial_sel, choices)
+      if (!is.na(idx) && idx > 1L) {
+        shiny::updateSelectInput(session, "trial_sel", selected = choices[[idx - 1L]])
       }
     })
     shiny::observeEvent(input$nextBtn, {
-      idx <- match(input$trial_sel, trial_choices)
-      if (idx < n_trials) {
-        shiny::updateSelectInput(session, "trial_sel", selected = trial_choices[[idx + 1L]])
+      choices <- trial_choices_current()
+      idx <- match(input$trial_sel, choices)
+      if (!is.na(idx) && idx < length(choices)) {
+        shiny::updateSelectInput(session, "trial_sel", selected = choices[[idx + 1L]])
       }
     })
+
+    if (has_subject_selector) {
+      shiny::observeEvent(input$subject_sel, {
+        choices <- trial_choices_current()
+        sents <- sent_choices_current()
+        shiny::updateSelectizeInput(session, "trial_sel", choices = choices, selected = choices[[1L]], server = TRUE)
+        if (!is.null(sents)) {
+          shiny::updateSelectizeInput(session, "sent_sel", choices = sents, selected = sents[[1L]], server = TRUE)
+        }
+      }, ignoreInit = TRUE)
+    }
 
     # -- trial/sentence sync --------------------------------------------------
     # When trial changes, update sentence
@@ -232,7 +284,8 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
       shiny::observe({
         shiny::req(input$trial_sel)
         tnr <- as.integer(input$trial_sel)
-        snr <- mapping$sentence_nr[mapping$trial_nr == tnr]
+        map <- mapping_current()
+        snr <- map$sentence_nr[map$trial_nr == tnr]
         if (length(snr) > 0 && !is.na(snr[1])) {
           shiny::updateSelectInput(session, "sent_sel", selected = as.character(snr[1]))
         }
@@ -242,12 +295,13 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
       shiny::observeEvent(input$sent_sel, {
         snr <- as.integer(input$sent_sel)
         tnr <- as.integer(input$trial_sel)
+        map <- mapping_current()
         
         # Check if current trial belongs to this sentence
-        current_snr <- mapping$sentence_nr[mapping$trial_nr == tnr]
+        current_snr <- map$sentence_nr[map$trial_nr == tnr]
         if (length(current_snr) == 0 || is.na(current_snr[1]) || current_snr[1] != snr) {
           # Pick the first trial for this sentence
-          matching_trials <- mapping$trial_nr[mapping$sentence_nr == snr]
+          matching_trials <- map$trial_nr[map$sentence_nr == snr]
           if (length(matching_trials) > 0) {
             shiny::updateSelectInput(session, "trial_sel", selected = as.character(matching_trials[1]))
           }
@@ -259,7 +313,7 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
 
     # Current trial_nr (actual value from the data)
     current_tnr <- shiny::reactive({
-      if (is.numeric(trial_choices)) {
+      if (is.numeric(trial_choices_current())) {
         as.integer(input$trial_sel)
       } else {
         # Fallback if character
@@ -274,6 +328,9 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
       t_on <- NA_real_
       t_off <- NA_real_
       if (!is.null(tdb)) {
+        if (has_subject_selector && "subject" %in% names(tdb)) {
+          tdb <- dplyr::filter(tdb, .data$subject == current_subject())
+        }
         row <- if ("trial_nr" %in% names(tdb)) {
           tdb[tdb$trial_nr == tnr, , drop = FALSE]
         } else if ("trial" %in% names(tdb)) {
@@ -295,6 +352,9 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
       tnr   <- current_tnr()
       eye   <- input$eye
       samp  <- samples
+      if (has_subject_selector && "subject" %in% names(samp)) {
+        samp <- dplyr::filter(samp, .data$subject == current_subject())
+      }
       if ("trial_nr" %in% names(samp)) {
         samp <- dplyr::filter(samp, .data$trial_nr == tnr)
       } else if ("trial" %in% names(samp)) {
@@ -336,6 +396,9 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
       eye  <- input$eye
       fix  <- fixations
       if (is.null(fix) || nrow(fix) == 0L) return(NULL)
+      if (has_subject_selector && "subject" %in% names(fix)) {
+        fix <- dplyr::filter(fix, .data$subject == current_subject())
+      }
       
       if ("trial_nr" %in% names(fix)) {
         fix <- dplyr::filter(fix, .data$trial_nr == tnr)
@@ -363,12 +426,16 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
       tnr <- current_tnr()
       wb  <- NULL
       if (!is.null(rois)) {
-        wb <- if ("trial_nr" %in% names(rois)) {
-          dplyr::filter(rois, .data$trial_nr == tnr)
-        } else if ("trial" %in% names(rois)) {
-          dplyr::filter(rois, .data$trial == tnr)
+        wb_in <- rois
+        if (has_subject_selector && "subject" %in% names(wb_in)) {
+          wb_in <- dplyr::filter(wb_in, .data$subject == current_subject())
+        }
+        wb <- if ("trial_nr" %in% names(wb_in)) {
+          dplyr::filter(wb_in, .data$trial_nr == tnr)
+        } else if ("trial" %in% names(wb_in)) {
+          dplyr::filter(wb_in, .data$trial == tnr)
         } else {
-          rois
+          wb_in
         }
       }
       wb
@@ -379,12 +446,16 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
       shiny::req(input$show_measures || input$show_word_table)
       tnr <- current_tnr()
       if (!is.null(measures)) {
-        wm <- if ("trial_nr" %in% names(measures)) {
-          dplyr::filter(measures, .data$trial_nr == tnr)
-        } else if ("trial" %in% names(measures)) {
-          dplyr::filter(measures, .data$trial == tnr)
+        wm_in <- measures
+        if (has_subject_selector && "subject" %in% names(wm_in)) {
+          wm_in <- dplyr::filter(wm_in, .data$subject == current_subject())
+        }
+        wm <- if ("trial_nr" %in% names(wm_in)) {
+          dplyr::filter(wm_in, .data$trial_nr == tnr)
+        } else if ("trial" %in% names(wm_in)) {
+          dplyr::filter(wm_in, .data$trial == tnr)
         } else {
-          measures
+          wm_in
         }
         return(wm)
       }
@@ -485,7 +556,11 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
       p <- ggplot2::ggplot() +
         ggplot2::theme_minimal() +
         ggplot2::labs(
-          title = paste0("Trial ", tnr, "  (eye: ", input$eye, ")"),
+          title = if (has_subject_selector) {
+            paste0("Subject ", current_subject(), " - Trial ", tnr, "  (eye: ", input$eye, ")")
+          } else {
+            paste0("Trial ", tnr, "  (eye: ", input$eye, ")")
+          },
           x = "Screen X (px)",
           y = "Screen Y (px)"
         )
@@ -669,7 +744,8 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
 # ---------------------------------------------------------------------------
 
 #' Extract unique trials and sentences to build choices for shiny dropdown
-#' @return A list with 'trial_choices', 'sentence_choices', and 'mapping'
+#' @return A list with 'subject_choices', 'trial_choices', 'sentence_choices',
+#'   and 'mapping'
 #' @noRd
 .shiny_trial_choices <- function(samples, fixations, rois, measures, trial_db) {
   dfs <- list(trial_db, measures, rois, fixations, samples)
@@ -678,31 +754,72 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
   for (df in dfs) {
     t_col <- if ("trial_nr" %in% names(df)) "trial_nr" else if ("trial" %in% names(df)) "trial" else NULL
     if (!is.null(t_col)) {
-      mapping_cols <- intersect(c(t_col, "sentence_nr"), names(df))
+      mapping_cols <- intersect(c("subject", t_col, "sentence_nr"), names(df))
       mapping <- unique(df[, mapping_cols, drop = FALSE])
       if (t_col != "trial_nr") names(mapping)[names(mapping) == t_col] <- "trial_nr"
-      mapping <- mapping[order(mapping$trial_nr), , drop = FALSE]
-      
-      choices <- mapping$trial_nr
-      if ("sentence_nr" %in% names(mapping)) {
-        names(choices) <- ifelse(is.na(mapping$sentence_nr), paste0("Trial ", mapping$trial_nr), paste0("Trial ", mapping$trial_nr, " (Sentence ", mapping$sentence_nr, ")"))
+      if ("subject" %in% names(mapping)) {
+        mapping <- mapping[order(mapping$subject, mapping$trial_nr), , drop = FALSE]
       } else {
-        names(choices) <- paste0("Trial ", mapping$trial_nr)
+        mapping <- mapping[order(mapping$trial_nr), , drop = FALSE]
       }
-      
-      sent_choices <- NULL
-      if ("sentence_nr" %in% names(mapping)) {
-        sents <- sort(unique(mapping$sentence_nr[!is.na(mapping$sentence_nr)]))
-        if (length(sents) > 0) {
-          sent_choices <- as.character(sents)
-          names(sent_choices) <- paste0("Sentence ", sents)
-        }
+
+      subject_choices <- NULL
+      if ("subject" %in% names(mapping)) {
+        subs <- unique(mapping$subject)
+        subject_choices <- as.character(subs)
+        names(subject_choices) <- paste0("Subject ", subs)
       }
-      
-      return(list(trial_choices = choices, sentence_choices = sent_choices, mapping = mapping))
+
+      mapping_first <- if ("subject" %in% names(mapping)) {
+        mapping[mapping$subject == subject_choices[[1L]], , drop = FALSE]
+      } else {
+        mapping
+      }
+
+      return(list(
+        subject_choices = subject_choices,
+        trial_choices = .shiny_make_trial_choices(mapping_first),
+        sentence_choices = .shiny_make_sentence_choices(mapping_first),
+        mapping = mapping
+      ))
     }
   }
-  list(trial_choices = stats::setNames(0L, "Trial 0"), sentence_choices = NULL, mapping = data.frame(trial_nr = 0L))
+  list(
+    subject_choices = NULL,
+    trial_choices = stats::setNames(0L, "Trial 0"),
+    sentence_choices = NULL,
+    mapping = data.frame(trial_nr = 0L)
+  )
+}
+
+#' @noRd
+.shiny_make_trial_choices <- function(mapping) {
+  if (is.null(mapping) || nrow(mapping) == 0L || !"trial_nr" %in% names(mapping)) {
+    return(stats::setNames(0L, "Trial 0"))
+  }
+  choices <- mapping$trial_nr
+  if ("sentence_nr" %in% names(mapping)) {
+    names(choices) <- ifelse(
+      is.na(mapping$sentence_nr),
+      paste0("Trial ", mapping$trial_nr),
+      paste0("Trial ", mapping$trial_nr, " (Sentence ", mapping$sentence_nr, ")")
+    )
+  } else {
+    names(choices) <- paste0("Trial ", mapping$trial_nr)
+  }
+  choices
+}
+
+#' @noRd
+.shiny_make_sentence_choices <- function(mapping) {
+  if (is.null(mapping) || nrow(mapping) == 0L || !"sentence_nr" %in% names(mapping)) {
+    return(NULL)
+  }
+  sents <- sort(unique(mapping$sentence_nr[!is.na(mapping$sentence_nr)]))
+  if (length(sents) == 0L) return(NULL)
+  sent_choices <- as.character(sents)
+  names(sent_choices) <- paste0("Sentence ", sents)
+  sent_choices
 }
 
 #' Check that all passed discrete tables contain the same set of trials

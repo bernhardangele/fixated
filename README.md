@@ -22,6 +22,8 @@ recorded by eye trackers such as the SR Research EyeLink system.
   - **GD** – Gaze duration (first-pass reading time)
   - **GPT** – Go-past time (regression-path duration)
   - **TVT** – Total viewing time
+- **Process multi-subject experiments** – Read and process many subject files
+  in one call with optional parallel execution (`process_subject_files()`).
 
 ## Installation
 
@@ -56,6 +58,29 @@ head(measures)
 # Browsing trials with gaze overlays and word boundaries
 if (interactive()) {
   plot_trials_shiny(result)
+}
+```
+
+### Multi-subject pipeline
+
+```r
+library(fixated)
+
+asc_paths <- c("sub_01.asc", "sub_02.asc", "sub_03.asc")
+experiment <- process_subject_files(asc_paths, parallel = FALSE)
+
+# Combined word-level measures across subjects
+head(experiment$measures)
+
+# Shiny can now switch between subjects via a selector
+if (interactive()) {
+  plot_trials_shiny_fast(
+    samples = experiment$samples,
+    fixations = experiment$fixations,
+    rois = experiment$word_boundaries,
+    measures = experiment$measures,
+    trial_db = experiment$trial_db
+  )
 }
 ```
 
