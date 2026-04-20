@@ -31,10 +31,6 @@ print(head(eyelogic_result$trial_db))
 cat("\n--- Word Boundaries (first 6 rows) ---\n")
 print(head(eyelogic_result$word_boundaries))
 
-# increment trial nr in samples by one
-eyelogic_result$samples <- eyelogic_result$samples %>% mutate(trial_nr = trial_nr + 1)
-eyelogic_result$trial_db <- eyelogic_result$trial_db %>% mutate(trial_nr = trial_nr + 1)
-
 # -------------------------------------------------------------------------
 # Step 2: Detect fixations from raw samples
 # -------------------------------------------------------------------------
