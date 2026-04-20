@@ -52,6 +52,9 @@
 #'       and columns `trial_nr`, `sentence_nr`, `t_trial_start` (ms),
 #'       `t_display_on` (ms), `t_display_off` (ms), `t_trial_end` (ms),
 #'       `has_display_off`, plus `_micro` suffixed columns with raw timestamps.
+#'       `trial_nr` is **1-based** (first trial = 1), matching the `trial_nr`
+#'       values produced by the `TRIAL ... ITEM ...` word-boundary messages
+#'       also returned in `word_boundaries`.
 #'       When `parse_vars = TRUE`, additional columns are appended for each
 #'       OpenSesame variable whose value is a simple scalar (no spaces).
 #'       When `opensesame_csv_path` is provided, all columns from that file
@@ -384,9 +387,12 @@ read_eyelogic <- function(path,
   
   if (length(start_idx) == 0L) return(NULL)
   
-  # Extract trial numbers from start_trial messages
+  # Extract trial numbers from start_trial messages.
+  # EyeLogic logs start_trial 0, 1, 2, ... (0-based) but word boundaries are
+  # logged as TRIAL 1, 2, 3, ... (1-based). Add 1 so trial_db uses the same
+  # 1-based numbering as word_boundaries, enabling correct downstream joins.
   m_start <- stringr::str_match(msg_content[start_idx], start_pattern)
-  trial_nrs <- as.integer(m_start[, 2L])
+  trial_nrs <- as.integer(m_start[, 2L]) + 1L
   
   # Find stop_trial messages
   stop_pattern <- "^\\s*stop_trial"
