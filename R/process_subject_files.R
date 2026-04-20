@@ -11,6 +11,11 @@
 #' If `compute_measures = TRUE`, word-level measures are computed per subject
 #' with [compute_eye_measures()] whenever fixation and ROI data are available.
 #'
+#' Subject identifiers are standardized to a `subject` column. When a table
+#' already has `subject`, it is reused. Otherwise `subject_nr`, `participant`,
+#' or `participant_id` are used when present; if none are available, the
+#' per-file `subject_ids` value is inserted.
+#'
 #' @param paths Character vector of input file paths (one path per subject).
 #' @param subject_ids Optional character vector of subject identifiers. Must
 #'   have the same length as `paths` when provided. Defaults to file basenames

@@ -1009,7 +1009,6 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
   
   # Find first DF with trial info
   for (df in dfs) {
-    df <- .add_subject_column(df)
     t_col <- if ("trial_nr" %in% names(df)) "trial_nr" else if ("trial" %in% names(df)) "trial" else NULL
     if (!is.null(t_col)) {
       # Build mapping

@@ -752,7 +752,6 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
   dfs <- dfs[!vapply(dfs, is.null, logical(1))]
   
   for (df in dfs) {
-    df <- .add_subject_column(df)
     t_col <- if ("trial_nr" %in% names(df)) "trial_nr" else if ("trial" %in% names(df)) "trial" else NULL
     if (!is.null(t_col)) {
       mapping_cols <- intersect(c("subject", t_col, "sentence_nr"), names(df))

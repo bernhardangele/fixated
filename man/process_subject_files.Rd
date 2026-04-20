@@ -68,4 +68,9 @@ By default, files are read with \code{\link[=read_asc]{read_asc()}}. The reader 
 
 If \code{compute_measures = TRUE}, word-level measures are computed per subject
 with \code{\link[=compute_eye_measures]{compute_eye_measures()}} whenever fixation and ROI data are available.
+
+Subject identifiers are standardized to a \code{subject} column. When a table
+already has \code{subject}, it is reused. Otherwise \code{subject_nr}, \code{participant},
+or \code{participant_id} are used when present; if none are available, the
+per-file \code{subject_ids} value is inserted.
 }
