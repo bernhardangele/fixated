@@ -255,14 +255,14 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
     shiny::observeEvent(input$prevBtn, {
       choices <- trial_choices_current()
       idx <- match(input$trial_sel, choices)
-      if (idx > 1L) {
+      if (!is.na(idx) && idx > 1L) {
         shiny::updateSelectInput(session, "trial_sel", selected = choices[[idx - 1L]])
       }
     })
     shiny::observeEvent(input$nextBtn, {
       choices <- trial_choices_current()
       idx <- match(input$trial_sel, choices)
-      if (idx < length(choices)) {
+      if (!is.na(idx) && idx < length(choices)) {
         shiny::updateSelectInput(session, "trial_sel", selected = choices[[idx + 1L]])
       }
     })

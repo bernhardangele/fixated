@@ -78,7 +78,7 @@ process_subject_files <- function(
   stopifnot(is.logical(compute_measures), length(compute_measures) == 1L)
   stopifnot(is.logical(parallel), length(parallel) == 1L)
 
-  worker <- function(path, subject_id) {
+  process_single_subject <- function(path, subject_id) {
     raw <- do.call(read_fun, c(list(path = path), read_args))
     if (!is.list(raw)) {
       stop("read_fun must return a list for path: ", path)
@@ -132,14 +132,14 @@ process_subject_files <- function(
       )
     }
     per_subject <- future.apply::future_mapply(
-      FUN = worker,
+      FUN = process_single_subject,
       path = paths,
       subject_id = subject_ids,
       SIMPLIFY = FALSE,
       USE.NAMES = FALSE
     )
   } else {
-    per_subject <- Map(worker, paths, subject_ids)
+    per_subject <- Map(process_single_subject, paths, subject_ids)
   }
 
   names(per_subject) <- subject_ids
