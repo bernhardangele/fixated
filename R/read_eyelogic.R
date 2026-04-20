@@ -100,17 +100,20 @@ read_eyelogic <- function(path,
   # Determine separator
   sep <- ";"
   
-  # Read the file
-  # Suppress warnings about column count mismatches (MSG lines have fewer columns than DAT lines)
-  raw <- suppressWarnings(readr::read_delim(
+  # Read the file using utils::read.table (more robust for mixed row lengths in EyeLogic files)
+  raw <- utils::read.table(
     path,
-    delim = sep,
-    col_types = readr::cols(
-      .default = readr::col_character()
-    ),
+    sep = sep,
+    header = TRUE,
     skip = if (grepl("^Sep=", first_line)) 1L else 0L,
-    show_col_types = FALSE
-  ))
+    colClasses = "character",
+    fill = TRUE,
+    quote = "",
+    comment.char = "",
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+  raw <- dplyr::as_tibble(raw)
   
   # ---- 2. Separate MSG and DAT lines -----------------------------------------
   if (!"TYPE" %in% names(raw)) {
