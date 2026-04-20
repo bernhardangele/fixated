@@ -12,7 +12,7 @@ message("Loading EyeLogic CSV file...")
 
 # Read the EyeLogic file
 # This returns a list with samples, word_boundaries, trial_db, etc.
-eyelogic_result <- read_eyelogic("data_to_incorporate/subject-999.eyelogic.csv", opensesame_csv_path = "data_to_incorporate/subject-999.csv")
+eyelogic_result <- read_eyelogic("data_to_incorporate/subject-5.eyelogic.csv", opensesame_csv_path = "data_to_incorporate/subject-999.csv")
 
 asc_result <- read_asc("data_to_incorporate/sub_1.asc")
 

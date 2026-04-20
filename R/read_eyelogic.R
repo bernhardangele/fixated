@@ -114,6 +114,7 @@ read_eyelogic <- function(path,
     stringsAsFactors = FALSE
   )
   raw <- dplyr::as_tibble(raw)
+
   # ---- 2. Separate MSG and DAT lines -----------------------------------------
   if (!"TYPE" %in% names(raw)) {
     stop("File does not have a TYPE column. Is this a valid EyeLogic file?")

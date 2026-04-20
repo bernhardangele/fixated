@@ -54,6 +54,8 @@ analyzeeyedry_dir <- file.path(getwd(), "analyzeeyedry")
 if (!requireNamespace("analyzeeyedry", quietly = TRUE)) {
   install.packages(analyzeeyedry_dir, repos = NULL, type = "source")
 }
+
+devtools::load_all(pkg_root)  # Load fixated functions without installing
 if (!requireNamespace("fixated", quietly = TRUE)) {
   install.packages(pkg_root, repos = NULL, type = "source")
 }
