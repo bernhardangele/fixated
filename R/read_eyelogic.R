@@ -387,9 +387,12 @@ read_eyelogic <- function(path,
   
   if (length(start_idx) == 0L) return(NULL)
   
-  # Extract trial numbers from start_trial messages
+  # Extract trial numbers from start_trial messages.
+  # EyeLogic start_trial messages are 0-indexed (start_trial 0, 1, ...),
+  # but word-boundary TRIAL numbers are 1-indexed (TRIAL 1 ITEM ...).
+  # Add 1 so that trial_db$trial_nr matches word_boundaries$trial_nr.
   m_start <- stringr::str_match(msg_content[start_idx], start_pattern)
-  trial_nrs <- as.integer(m_start[, 2L])
+  trial_nrs <- as.integer(m_start[, 2L]) + 1L
   
   # Find stop_trial messages
   stop_pattern <- "^\\s*stop_trial"
@@ -684,6 +687,20 @@ read_eyelogic <- function(path,
   prefixed_data <- prefixed_data[, c("sentence_number", 
                                       setdiff(names(prefixed_data), c("sentence_number", "sentence_nr"))), 
                                   drop = FALSE]
+  
+  # Warn if the CSV has duplicate sentence_number values: a left_join with
+  # duplicates on both sides produces a many-to-many expansion that inflates
+  # trial_db and corrupts per-trial metadata.
+  dup_sn <- prefixed_data$sentence_number[duplicated(prefixed_data$sentence_number)]
+  if (length(dup_sn) > 0L) {
+    warning(
+      "OpenSesame CSV has duplicate sentence_number value(s): ",
+      paste(unique(dup_sn), collapse = ", "),
+      ". The left_join will expand trial_db rows for these sentences, ",
+      "producing incorrect per-trial metadata. Consider deduplicating the CSV ",
+      "before passing it to read_eyelogic()."
+    )
+  }
   
   # Join with trial_db by sentence_nr (trial_db) = sentence_number (CSV)
   trial_db <- dplyr::left_join(
