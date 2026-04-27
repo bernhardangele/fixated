@@ -143,12 +143,15 @@ get_landing_info <- function(fixations, word_boundaries) {
     joined$.cross_key <- NULL
   }
 
-  # Filter to rows where avg_x falls within the word boundary
+  # Filter to rows where avg_x falls within the word boundary.
+  # A small tolerance (1e-9) is used to handle slight numeric drift so that
+  # fixations landing exactly at the boundary edge are still matched.
+  .eps <- 1e-9
   in_bounds <- !is.na(joined$avg_x) &
                !is.na(joined$x_start) &
                !is.na(joined$x_end) &
-               joined$avg_x >= joined$x_start &
-               joined$avg_x <= joined$x_end
+               joined$avg_x >= joined$x_start - .eps &
+               joined$avg_x <= joined$x_end   + .eps
   matches <- joined[in_bounds, , drop = FALSE]
 
   if (nrow(matches) > 0L) {
