@@ -286,3 +286,112 @@ test_that("detect_fixations errors when saccades package is unavailable", {
     "saccades"
   )
 })
+# get_eyelink_saccades()
+# ---------------------------------------------------------------------------
+
+test_that("get_eyelink_saccades returns SACCADE rows from events", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result   <- read_asc(asc_file)
+  saccades <- get_eyelink_saccades(result$events)
+  expect_true(is.data.frame(saccades))
+  expected_cols <- c("start_time", "end_time", "duration",
+                     "x_start", "y_start", "x_end", "y_end", "eye")
+  expect_true(all(expected_cols %in% names(saccades)))
+})
+
+test_that("get_eyelink_saccades x_end is the saccade landing x position", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result   <- read_asc(asc_file)
+  saccades <- get_eyelink_saccades(result$events)
+  # x_end should be numeric (landing x) and not all NA
+  expect_true(is.numeric(saccades$x_end))
+  expect_true(any(!is.na(saccades$x_end)))
+})
+
+test_that("get_eyelink_saccades contains no fixation or blink rows", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result   <- read_asc(asc_file)
+  saccades <- get_eyelink_saccades(result$events)
+  # All rows must have come from SACCADE events; 'type' column is dropped in
+  # output, so verify via count: saccade rows in events == rows in output
+  n_sacc_events <- sum(result$events$type == "SACCADE" &
+                         result$events$eye %in% c("L", "R"))
+  expect_equal(nrow(saccades), n_sacc_events)
+})
+
+test_that("get_eyelink_saccades preserves trial_nr when present", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file)
+  if ("trial_nr" %in% names(result$events)) {
+    saccades <- get_eyelink_saccades(result$events)
+    expect_true("trial_nr" %in% names(saccades))
+  }
+})
+
+test_that("get_eyelink_saccades preserves sentence_nr when present", {
+  events <- dplyr::tibble(
+    type        = rep("SACCADE", 3),
+    eye         = rep("R", 3),
+    start_time  = c(0L, 200L, 400L),
+    end_time    = c(50L, 250L, 450L),
+    duration    = c(50L, 50L, 50L),
+    x_start     = c(300, 500, 700),
+    y_start     = c(400, 400, 400),
+    x_end       = c(500, 700, 900),
+    y_end       = c(400, 400, 400),
+    avg_x       = c(NA_real_, NA_real_, NA_real_),
+    avg_y       = c(NA_real_, NA_real_, NA_real_),
+    avg_pupil   = c(NA_real_, NA_real_, NA_real_),
+    trial_nr    = c(1L, 1L, 2L),
+    sentence_nr = c(1L, 2L, 1L)
+  )
+  saccades <- get_eyelink_saccades(events)
+  expect_true("sentence_nr" %in% names(saccades))
+  expect_equal(saccades$sentence_nr, c(1L, 2L, 1L))
+})
+
+test_that("get_eyelink_saccades sorted by start_time", {
+  events <- dplyr::tibble(
+    type      = rep("SACCADE", 3),
+    eye       = rep("R", 3),
+    start_time = c(400L, 0L, 200L),
+    end_time   = c(450L, 50L, 250L),
+    duration   = c(50L, 50L, 50L),
+    x_start    = c(700, 300, 500),
+    y_start    = c(400, 400, 400),
+    x_end      = c(900, 500, 700),
+    y_end      = c(400, 400, 400),
+    avg_x      = c(NA_real_, NA_real_, NA_real_),
+    avg_y      = c(NA_real_, NA_real_, NA_real_),
+    avg_pupil  = c(NA_real_, NA_real_, NA_real_)
+  )
+  saccades <- get_eyelink_saccades(events)
+  expect_equal(saccades$start_time, c(0L, 200L, 400L))
+})
+
+test_that("get_eyelink_saccades errors on missing required columns", {
+  bad_events <- dplyr::tibble(type = "SACCADE", eye = "R")
+  expect_error(get_eyelink_saccades(bad_events), "missing required columns")
+})
+
+# ---------------------------------------------------------------------------
+# detect_fixations() saccades method
+# ---------------------------------------------------------------------------
+
+test_that("detect_fixations errors when saccades package is unavailable", {
+  skip_if(requireNamespace("saccades", quietly = TRUE),
+          "saccades package is installed; skipping unavailability test")
+  samples <- dplyr::tibble(
+    time = seq(0L, 500L, by = 10L),
+    x    = rep(300, 51),
+    y    = rep(400, 51)
+  )
+  expect_error(
+    detect_fixations(samples, method = "saccades"),
+    "saccades"
+  )
+})

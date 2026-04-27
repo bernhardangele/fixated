@@ -12,6 +12,12 @@
 #'   algorithm (`detect_fixations()`).
 #' * Clean fixation sequences: merge adjacent short fixations and remove
 #'   outliers (`clean_fixations()`).
+#' * Extract EyeLink-detected fixations (including average x/y location)
+#'   from parsed events (`get_eyelink_fixations()`).
+#' * Extract EyeLink-detected saccades (including landing x/y position)
+#'   from parsed events (`get_eyelink_saccades()`).
+#' * Add landing position information to a fixations tibble based on word
+#'   boundaries (`get_landing_info()`).
 #' * Read word-level regions of interest from a CSV file (`read_roi()`).
 #' * Compute standard reading-research eye-movement measures per word
 #'   (`compute_eye_measures()`): first fixation duration (FFD), gaze
