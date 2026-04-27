@@ -218,7 +218,7 @@ get_landing_info <- function(fixations, word_boundaries) {
     group_id <- do.call(
       paste,
       c(lapply(group_cols, function(col) as.character(result[[col]])),
-        sep = "\x00")
+        sep = "|||")
     )
   } else {
     group_id <- rep("__all__", nrow(result))
@@ -228,7 +228,7 @@ get_landing_info <- function(fixations, word_boundaries) {
   for (i in seq_len(nrow(result))) {
     wid <- result$word_id[i]
     if (!is.na(wid)) {
-      key <- paste0(group_id[i], "\x00", wid)
+      key <- paste0(group_id[i], "|||", wid)
       if (is.null(seen_words[[key]])) {
         result$fixation_type[i] <- "first"
         seen_words[[key]]       <- TRUE
