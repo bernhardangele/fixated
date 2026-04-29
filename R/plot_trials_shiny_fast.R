@@ -1037,37 +1037,13 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         )
       }
 
-      # Helper: snap a vector of avg_y values to 20% above the vertical
-      # centre of their nearest word ROI row (or fall back to y_median - 20 px).
-      .fix_display_y <- function(avg_y_vec) {
-        if (has_full_roi && nrow(wb) > 0L) {
-          sapply(avg_y_vec, function(fy) {
-            match_idx <- which(fy >= wb$y_start & fy <= wb$y_end)
-            row <- if (length(match_idx) > 0L) {
-              wb[match_idx[1L], , drop = FALSE]
-            } else {
-              dists <- pmin(abs(fy - wb$y_start), abs(fy - wb$y_end))
-              wb[which.min(dists), , drop = FALSE]
-            }
-            center_y <- (row$y_start + row$y_end) / 2
-            word_h   <- row$y_end - row$y_start
-            center_y - word_h * 0.20
-          })
-        } else {
-          rep(y_median - 20, length(avg_y_vec))
-        }
-      }
-
       # Fixation path + circles
       if (input$show_fixations && !is.null(fix) && nrow(fix) > 0L) {
-
-        # Normalised display-y: slightly above the word-line centre for clarity
-        fix_display_y <- .fix_display_y(fix$avg_y)
 
         # Line Path connecting fixations
         p <- plotly::add_trace(
           p, data = fix,
-          x = ~avg_x, y = fix_display_y,
+          x = ~avg_x, y = ~avg_y,
           type = "scatter",
           mode = "lines",
           line = list(color = "rgba(255, 0, 0, 0.5)", width = 1, dash = "dash"),
@@ -1121,7 +1097,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         # Scatter points for Fixations
         p <- plotly::add_trace(
           p, data = fix,
-          x = ~avg_x, y = fix_display_y,
+          x = ~avg_x, y = ~avg_y,
           type = "scatter",
           mode = "markers",
           marker = list(
@@ -1151,7 +1127,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         )
 
         # Normalise display-y using the same helper as kept fixations
-        removed_display_y <- .fix_display_y(removed_fix$avg_y)
+        removed_display_y <- removed_fix$avg_y
 
         # Duration-proportional sizing (same scale as kept fixations)
         rdur_min <- min(removed_fix$duration, na.rm = TRUE)
