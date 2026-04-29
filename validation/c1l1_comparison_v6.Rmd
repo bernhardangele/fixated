@@ -58,9 +58,9 @@ analyzeeyedry_dir <- file.path(getwd(), "analyzeeyedry")
 if (!requireNamespace("analyzeeyedry", quietly = TRUE)) {
   install.packages(analyzeeyedry_dir, repos = NULL, type = "source")
 }
-if (!requireNamespace("fixated", quietly = TRUE)) {
-  install.packages(pkg_root, repos = NULL, type = "source")
-}
+# Always reinstall fixated from source: v6 requires character_boundaries in
+# read_eyetrack_asc(), which may not be present in a previously installed build.
+install.packages(pkg_root, repos = NULL, type = "source", quiet = TRUE)
 
 library(analyzeeyedry)
 library(fixated)
