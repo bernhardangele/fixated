@@ -81,7 +81,14 @@
 #' et_file <- system.file("extdata", "eyetrack_example.asc", package = "fixated")
 #' if (file.exists(et_file)) {
 #'   result <- read_eyetrack_asc(et_file)
-#'   plot_trials_shiny(result)
+#'   # Pass data frames individually since read_eyetrack_asc does not produce
+#'   # samples/events (use the fixations element directly)
+#'   plot_trials_shiny(
+#'     fixations            = result$fixations,
+#'     rois                 = result$word_boundaries,
+#'     character_boundaries = result$character_boundaries,
+#'     trial_db             = result$trial_db
+#'   )
 #' }
 #' }
 plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
