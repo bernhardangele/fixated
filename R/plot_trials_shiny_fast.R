@@ -265,6 +265,26 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
       if (has_subject_selector) as.character(input$subject_sel) else NULL
     })
 
+    # -- zoom-level tracking for adaptive char label sizing -------------------
+    zoom_xrange <- shiny::reactiveVal(NULL)
+    # Reset stored zoom whenever the user navigates to a different trial
+    shiny::observeEvent(input$trial_sel, { zoom_xrange(NULL) }, ignoreInit = TRUE)
+    shiny::observeEvent(
+      plotly::event_data("plotly_relayout", source = "gaze_plot"),
+      {
+        ev <- plotly::event_data("plotly_relayout", source = "gaze_plot")
+        if (!is.null(ev)) {
+          x0 <- ev[["xaxis.range[0]"]]
+          x1 <- ev[["xaxis.range[1]"]]
+          if (!is.null(x0) && !is.null(x1)) {
+            zoom_xrange(c(as.numeric(x0), as.numeric(x1)))
+          } else {
+            zoom_xrange(NULL)  # double-click auto-range reset
+          }
+        }
+      }
+    )
+
     mapping_current <- shiny::reactive({
       if (!has_subject_selector) return(mapping)
       mapping[mapping$subject == current_subject(), , drop = FALSE]
@@ -755,8 +775,25 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         540
       }
 
+      # Char label size: 8 pt at full zoom, scaled up proportionally when zoomed in
+      full_xrange_data <- if (nrow(samp) > 0L) {
+        range(samp$x, na.rm = TRUE)
+      } else if (!is.null(wb) && nrow(wb) > 0L && "x_start" %in% names(wb)) {
+        c(min(wb$x_start, na.rm = TRUE), max(wb$x_end, na.rm = TRUE))
+      } else {
+        NULL
+      }
+      zr <- zoom_xrange()
+      char_label_size <- if (is.null(zr) || is.null(full_xrange_data)) {
+        8
+      } else {
+        full_width <- diff(full_xrange_data)
+        zoom_width <- diff(zr)
+        if (zoom_width <= 0 || full_width <= 0) 8 else max(8, round(8 * full_width / zoom_width))
+      }
+
       # --- Start Plotly Object ---
-      p <- plotly::plot_ly()
+      p <- plotly::plot_ly(source = "gaze_plot")
       
       # Base layout
       p <- plotly::layout(
@@ -905,18 +942,12 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         } else {
           rep(y_median, nrow(wb))
         }
-        # When character regions are also shown, shift word labels upward
-        # (smaller y in screen coordinates = visually higher) to prevent
-        # overlap with the character letter labels.
-        if (show_both_regions && has_full_roi) {
-          # Shift by ~65% of the average character height to clear the char labels
-          label_shift_factor <- 0.65
-          char_height_est <- if (nrow(cb) > 0L) {
-            mean(abs(cb$y_end - cb$y_start), na.rm = TRUE)
-          } else {
-            20
-          }
-          label_y <- label_y - char_height_est * label_shift_factor
+        # When character regions are also shown, shift word labels slightly above
+        # the center of the word region (~20% of word height) so they sit above
+        # the character letter labels without hiding them.
+        if (isTRUE(input$show_char_regions) && has_full_roi) {
+          word_height <- wb$y_end - wb$y_start
+          label_y <- label_y - word_height * 0.20
         }
         p <- plotly::add_text(
           p, x = label_x, y = label_y, text = wb$word,
@@ -932,7 +963,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         p <- plotly::add_text(
           p, x = char_label_x, y = char_label_y,
           text = as.character(cb$char),
-          textfont = list(color = "darkorange", size = 8),
+          textfont = list(color = "darkorange", size = char_label_size),
           hoverinfo = "none", showlegend = FALSE
         )
       }
@@ -1043,13 +1074,37 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         )
       }
 
+      # Helper: snap a vector of avg_y values to 20% above the vertical
+      # centre of their nearest word ROI row (or fall back to y_median - 20 px).
+      .fix_display_y <- function(avg_y_vec) {
+        if (has_full_roi && nrow(wb) > 0L) {
+          sapply(avg_y_vec, function(fy) {
+            match_idx <- which(fy >= wb$y_start & fy <= wb$y_end)
+            row <- if (length(match_idx) > 0L) {
+              wb[match_idx[1L], , drop = FALSE]
+            } else {
+              dists <- pmin(abs(fy - wb$y_start), abs(fy - wb$y_end))
+              wb[which.min(dists), , drop = FALSE]
+            }
+            center_y <- (row$y_start + row$y_end) / 2
+            word_h   <- row$y_end - row$y_start
+            center_y - word_h * 0.20
+          })
+        } else {
+          rep(y_median - 20, length(avg_y_vec))
+        }
+      }
+
       # Fixation path + circles
       if (input$show_fixations && !is.null(fix) && nrow(fix) > 0L) {
-        
+
+        # Normalised display-y: slightly above the word-line centre for clarity
+        fix_display_y <- .fix_display_y(fix$avg_y)
+
         # Line Path connecting fixations
         p <- plotly::add_trace(
           p, data = fix,
-          x = ~avg_x, y = ~avg_y,
+          x = ~avg_x, y = fix_display_y,
           type = "scatter",
           mode = "lines",
           line = list(color = "rgba(255, 0, 0, 0.5)", width = 1, dash = "dash"),
@@ -1103,7 +1158,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         # Scatter points for Fixations
         p <- plotly::add_trace(
           p, data = fix,
-          x = ~avg_x, y = ~avg_y,
+          x = ~avg_x, y = fix_display_y,
           type = "scatter",
           mode = "markers",
           marker = list(
@@ -1117,7 +1172,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         )
       }
 
-      # Removed fixations (grey X markers, no connecting path, with reason tooltip)
+      # Removed fixations (grey circles, size proportional to duration)
       if (!is.null(removed_fix) && nrow(removed_fix) > 0L) {
         reason_col <- if ("reason" %in% names(removed_fix)) {
           removed_fix$reason
@@ -1131,16 +1186,29 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
           "X: ", round(removed_fix$avg_x), "<br>",
           "Y: ", round(removed_fix$avg_y)
         )
+
+        # Normalise display-y using the same helper as kept fixations
+        removed_display_y <- .fix_display_y(removed_fix$avg_y)
+
+        # Duration-proportional sizing (same scale as kept fixations)
+        rdur_min <- min(removed_fix$duration, na.rm = TRUE)
+        rdur_max <- max(removed_fix$duration, na.rm = TRUE)
+        removed_sizes <- if (rdur_max > rdur_min) {
+          5 + 25 * ((removed_fix$duration - rdur_min) / (rdur_max - rdur_min))
+        } else {
+          rep(10, nrow(removed_fix))
+        }
+
         p <- plotly::add_trace(
           p, data = removed_fix,
-          x = ~avg_x, y = ~avg_y,
+          x = ~avg_x, y = removed_display_y,
           type = "scatter",
           mode = "markers",
           marker = list(
             color = "rgba(150, 150, 150, 0.55)",
-            size = 10,
-            symbol = "x",
-            line = list(color = "rgba(120, 120, 120, 0.8)", width = 1.5)
+            size = removed_sizes,
+            symbol = "circle",
+            line = list(color = "rgba(120, 120, 120, 0.8)", width = 1)
           ),
           text = hover_txt_removed,
           hoverinfo = "text",
