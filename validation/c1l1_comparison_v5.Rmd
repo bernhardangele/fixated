@@ -1,0 +1,433 @@
+---
+title: "Validation v5: First Pass Fixation Position (FPFP)"
+author: "Auto-generated validation report"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# 1. Introduction
+
+This is the fifth validation report comparing **fixated** against
+**analyzeeyedry** on `C1L1.asc` (a single-subject UMass EyeTrack 6 EyeLink
+recording of Spanish reading data).
+
+The primary goal of this report is to validate the **First Pass Fixation
+Position (FPFP)** computed by fixated's new `get_landing_info()` function
+against the **First Pass Landing Position (`fplp`)** computed by analyzeeyedry
+(eyedry analysis 11).
+
+## What is FPFP / fplp?
+
+Both measures capture *where* within a word the eye first landed during the
+first pass (before making a rightward exit or a regression out of the word).
+Only the first fixation that passes the `shorttime` / `longtime` validity
+checks is used — short fixations (duration ≤ `shorttime`) are skipped, and a
+long fixation (duration > `longtime`) discards the value (returning `NA`).
+
+**analyzeeyedry (`fplp`):** Returns the 0-indexed character position (from the
+start of the word/region) of the first valid first-pass fixation.  Character
+positions are assigned by comparing the fixation's pixel x coordinate against
+the right-pixel-boundary of each character from the `REGION CHAR` ASC messages.
+
+**fixated (`fixated_char`):** `get_landing_info()` computes `word_proportion =
+(avg_x − x_start) / (x_end − x_start)` and then `fixated_char = floor(N ×
+word_proportion) + 1` where `N` is the number of characters in the word
+(assuming a monospace font).  To compare with analyzeeyedry's 0-indexed
+`fplp`, we use **`fixated_char − 1`**.
+
+The analysis uses the same parameter set as v4 (`shorttime = 80`,
+`longtime = 800`, `ttcutoff = 4000`, `truncate_at_display_on = TRUE`).
+
+---
+
+# 2. Setup
+
+```{r packages}
+pkg_root          <- file.path(getwd(), "..")
+analyzeeyedry_dir <- file.path(getwd(), "analyzeeyedry")
+
+if (!requireNamespace("analyzeeyedry", quietly = TRUE)) {
+  install.packages(analyzeeyedry_dir, repos = NULL, type = "source")
+}
+if (!requireNamespace("fixated", quietly = TRUE)) {
+  install.packages(pkg_root, repos = NULL, type = "source")
+}
+
+library(analyzeeyedry)
+library(fixated)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(knitr)
+
+ASC_FILE  <- file.path(pkg_root, "data_to_incorporate", "C1L1.asc")
+SHORTTIME <- 80L
+LONGTIME  <- 800L
+TTCUTOFF  <- 4000L
+
+stopifnot(file.exists(ASC_FILE))
+cat("ASC file:", ASC_FILE, "\n")
+cat("fixated version:", as.character(packageVersion("fixated")), "\n")
+cat("analyzeeyedry version:", as.character(packageVersion("analyzeeyedry")), "\n")
+```
+
+---
+
+# 3. Parse C1L1.asc with `read_eyetrack_asc()`
+
+```{r parse-eyetrack}
+et <- read_eyetrack_asc(ASC_FILE, trial_pattern = "^[A-Za-z]")
+cat(sprintf("Parsed %d trials\n", nrow(et$trial_db)))
+cat(sprintf("Fixations: %d rows\n", nrow(et$fixations)))
+cat(sprintf("Word boundaries: %d rows across %d trials\n",
+            nrow(et$word_boundaries),
+            n_distinct(et$word_boundaries$trial_nr)))
+```
+
+---
+
+# 4. analyzeeyedry reference analysis
+
+```{r eyedry-analysis}
+word_regions_edry <- asc_to_cnt(
+  ASC_FILE, trial_pattern = "^[A-Za-z]",
+  spillover_gap = 1L, spillover_size = 20L)
+fix_edry   <- asc_to_fixations(ASC_FILE, subj = 1L, trial_pattern = "^[A-Za-z]")
+fix_edry_r <- assign_regions_to_fixations(fix_edry, word_regions_edry)
+nregmax_val <- max(word_regions_edry$nreg, na.rm = TRUE)
+
+measures_edry <- compute_fixation_measures(
+  fix_edry_r, word_regions_edry,
+  shorttime = SHORTTIME, longtime = LONGTIME,
+  ttcutoff  = TTCUTOFF,
+  nregmax   = nregmax_val)
+cat(sprintf("analyzeeyedry: measures for %d trials\n", nrow(measures_edry)))
+```
+
+---
+
+# 5. Compute fixated FPFP using `get_landing_info()`
+
+This section shows how to compute the First Pass Fixation Position from
+`fixated`.  The steps are:
+
+1. Apply the same `truncate_at_display_on` pre-processing that
+   `compute_eye_measures()` uses.
+2. Call `get_landing_info()` to add `fixated_char` to every fixation.
+3. For each trial × word, loop through the (time-sorted) fixations in the same
+   order as the FFD algorithm to find the first valid first-pass fixation and
+   record its `fixated_char`.
+
+```{r fixated-fpfp}
+# ---- Step 1: apply truncate_at_display_on filtering -------------------------
+fix_raw <- et$fixations
+tdb     <- et$trial_db
+
+fix_filtered <- fix_raw |>
+  dplyr::left_join(
+    tdb[, c("trial_nr", "t_display_on", "t_display_off")],
+    by = "trial_nr") |>
+  dplyr::filter(end_time > t_display_on) |>       # drop pre-display-onset fixes
+  dplyr::mutate(
+    straddle   = start_time <= t_display_on,
+    start_time = dplyr::if_else(straddle, t_display_on, start_time),
+    duration   = end_time - start_time            # recompute for straddlers
+  ) |>
+  dplyr::select(-t_display_on, -t_display_off, -straddle)
+
+cat(sprintf("Fixations after display-on filter: %d (raw: %d)\n",
+            nrow(fix_filtered), nrow(fix_raw)))
+
+# ---- Step 2: add landing info (word_id, word_proportion, fixated_char) ------
+fix_land <- get_landing_info(fix_filtered, et$word_boundaries)
+cat(sprintf("Fixations with word assignment: %d / %d\n",
+            sum(!is.na(fix_land$word_id)), nrow(fix_land)))
+
+# ---- Step 3: for each trial × word, extract FPFP ----------------------------
+# Mirrors the FFD loop in .compute_trial_measures() but records fixated_char
+# (converted to 0-indexed) instead of duration.
+
+compute_fpfp <- function(fix_land, word_boundaries,
+                          shorttime = 80L, longtime = 800L) {
+  trials <- sort(unique(fix_land$trial_nr))
+  result_rows <- vector("list", length(trials))
+  ri <- 1L
+
+  for (tr in trials) {
+    # Time-sorted fixations for this trial
+    tf <- fix_land[fix_land$trial_nr == tr, ]
+    tf <- tf[order(tf$start_time), ]
+
+    # Word boundaries for this trial
+    wb_tr <- word_boundaries[word_boundaries$trial_nr == tr, ]
+
+    for (w in sort(unique(wb_tr$word_id))) {
+      roi_row <- wb_tr[wb_tr$word_id == w, ]
+      if (nrow(roi_row) == 0L) next
+
+      x_s <- roi_row$x_start[[1L]]
+      x_e <- roi_row$x_end[[1L]]
+
+      px    <- tf$avg_x
+      dur   <- tf$duration
+      fc    <- tf$fixated_char          # 1-indexed; NA when outside word
+      n_fix <- nrow(tf)
+
+      in_r   <- px >= x_s & px <= x_e
+      past_r <- px >  x_e
+      is_sht <- dur <= shorttime
+      is_lng <- dur >  longtime
+
+      fpfp_val <- NA_integer_
+      for (i in seq_len(n_fix)) {
+        if (past_r[i] && !is_sht[i]) break         # non-short rightward exit
+        if (in_r[i]) {
+          if (is_lng[i]) break                      # long fixation: discard
+          if (is_sht[i]) next                       # short fixation: skip
+          if (!is.na(fc[i])) {
+            fpfp_val <- as.integer(fc[i]) - 1L      # convert to 0-indexed
+          }
+          break                                     # first valid fix found
+        }
+      }
+
+      result_rows[[ri]] <- data.frame(
+        trial_nr = tr,
+        word_id  = as.integer(w),
+        fpfp_fix = fpfp_val,
+        stringsAsFactors = FALSE)
+      ri <- ri + 1L
+    }
+  }
+
+  dplyr::bind_rows(result_rows[seq_len(ri - 1L)])
+}
+
+fpfp_fix <- compute_fpfp(fix_land, et$word_boundaries,
+                          shorttime = SHORTTIME, longtime = LONGTIME)
+
+cat(sprintf("FPFP computed for %d trial × word pairs\n", nrow(fpfp_fix)))
+cat(sprintf("Non-NA FPFP values: %d\n", sum(!is.na(fpfp_fix$fpfp_fix))))
+```
+
+---
+
+# 6. Reshape analyzeeyedry output
+
+```{r reshape-edry}
+trial_key <- dplyr::tibble(
+  trial_nr = seq_len(nrow(et$trial_db)),
+  cond     = et$trial_db$cond,
+  item     = et$trial_db$item)
+
+pivot_edry_long <- function(wide_df, trial_key,
+                             measures = c("ff","fp","tt","gp","oreg","ireg",
+                                          "pfix","nfix","sp","fplp")) {
+  meas_pat  <- paste0("^(", paste(measures, collapse="|"), ")_R\\d+$")
+  meas_cols <- names(wide_df)[grepl(meas_pat, names(wide_df))]
+  long <- wide_df |>
+    tidyr::pivot_longer(cols = dplyr::all_of(meas_cols),
+                        names_to  = c("measure","word_id"),
+                        names_pattern = "^(.+)_R(\\d+)$",
+                        values_to = "value") |>
+    dplyr::mutate(word_id = as.integer(word_id)) |>
+    tidyr::pivot_wider(names_from = measure, values_from = value) |>
+    dplyr::rename(ffd=ff, gd=fp, tvt=tt, gpt=gp) |>
+    dplyr::left_join(trial_key, by = c("cond", "item"))
+  long
+}
+
+edry_long <- pivot_edry_long(measures_edry, trial_key)
+cat("analyzeeyedry long format:", nrow(edry_long), "rows\n")
+```
+
+---
+
+# 7. Merge and compare
+
+```{r merge}
+compare_v5 <- edry_long |>
+  dplyr::select(trial_nr, cond, item, word_id,
+                ffd_edry=ffd, gd_edry=gd, gpt_edry=gpt, tvt_edry=tvt,
+                oreg_edry=oreg, ireg_edry=ireg, pfix_edry=pfix,
+                nfix_edry=nfix, sp_edry=sp, fplp_edry=fplp) |>
+  dplyr::inner_join(
+    fpfp_fix |>
+      dplyr::rename(fpfp_fix = fpfp_fix),
+    by = c("trial_nr","word_id")) |>
+  dplyr::arrange(trial_nr, word_id)
+
+cat(sprintf("Comparison table: %d rows\n", nrow(compare_v5)))
+cat(sprintf("Rows with both FPLP values non-NA: %d\n",
+            sum(!is.na(compare_v5$fplp_edry) & !is.na(compare_v5$fpfp_fix))))
+```
+
+---
+
+# 8. Agreement analysis
+
+## 8.1 Summary statistics
+
+```{r summary-stats}
+full_summary <- function(df, col_edry, col_fix, label) {
+  d    <- df[[col_fix]] - df[[col_edry]]
+  ref  <- pmax(abs(df[[col_edry]]), 1)
+  re   <- abs(d) / ref
+  both <- !is.na(df[[col_edry]]) & !is.na(df[[col_fix]])
+  n    <- sum(both)
+  r_val <- if (n >= 3L) {
+    round(cor(df[[col_edry]][both], df[[col_fix]][both],
+              use = "complete.obs"), 3)
+  } else NA_real_
+  data.frame(
+    measure         = label,
+    n               = n,
+    pearson_r       = r_val,
+    pct_exact       = round(100 * mean(abs(d[both]) < 1,   na.rm=TRUE), 1),
+    pct_1char       = round(100 * mean(abs(d[both]) <= 1,  na.rm=TRUE), 1),
+    pct_2char       = round(100 * mean(abs(d[both]) <= 2,  na.rm=TRUE), 1),
+    mean_abs_diff   = round(mean(abs(d[both]), na.rm=TRUE), 2),
+    median_abs_diff = round(median(abs(d[both]), na.rm=TRUE), 2),
+    stringsAsFactors = FALSE
+  )
+}
+
+summary_tbl <- full_summary(compare_v5, "fplp_edry", "fpfp_fix", "FPFP (chars)")
+knitr::kable(summary_tbl,
+             col.names = c("Measure","N","r",
+                           "% exact","% ≤1 char","% ≤2 chars",
+                           "Mean |diff| (chars)","Median |diff| (chars)"),
+             caption = "v5: agreement between fixated FPFP and analyzeeyedry fplp.")
+```
+
+## 8.2 Scatter plot
+
+```{r scatter-plot, fig.width=6, fig.height=5}
+plot_df <- compare_v5 |>
+  dplyr::filter(!is.na(fplp_edry), !is.na(fpfp_fix))
+
+ggplot(plot_df, aes(x = fplp_edry, y = fpfp_fix)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_jitter(alpha = 0.35, size = 0.9, colour = "#2166ac",
+              width = 0.2, height = 0.2) +
+  labs(title = "FPFP: analyzeeyedry fplp vs fixated (get_landing_info)",
+       subtitle = paste0("Both measures 0-indexed; N = ", nrow(plot_df)),
+       x = "analyzeeyedry fplp (characters, 0-indexed from word start)",
+       y = "fixated fixated_char − 1 (characters, 0-indexed)") +
+  theme_bw(base_size = 11)
+```
+
+## 8.3 Cross-tabulation of FPFP values
+
+```{r crosstab}
+both_known <- compare_v5 |>
+  dplyr::filter(!is.na(fplp_edry), !is.na(fpfp_fix))
+
+ct <- table(edry = both_known$fplp_edry,
+            fixated = both_known$fpfp_fix,
+            useNA = "ifany")
+cat("Cross-tabulation of fplp (analyzeeyedry) vs fpfp_fix (fixated):\n")
+print(ct)
+
+n_both  <- nrow(both_known)
+n_match <- sum(both_known$fplp_edry == both_known$fpfp_fix, na.rm = TRUE)
+cat(sprintf("\nExact match: %d / %d (%.1f%%)\n",
+            n_match, n_both, 100 * n_match / max(n_both, 1L)))
+```
+
+## 8.4 Distribution of absolute differences
+
+```{r diff-distribution, fig.width=6, fig.height=4}
+diff_df <- compare_v5 |>
+  dplyr::filter(!is.na(fplp_edry), !is.na(fpfp_fix)) |>
+  dplyr::mutate(abs_diff = abs(fpfp_fix - fplp_edry))
+
+ggplot(diff_df, aes(x = abs_diff)) +
+  geom_histogram(binwidth = 1, fill = "#2166ac", colour = "white", alpha = 0.8) +
+  geom_vline(xintercept = 0.5, linetype = "dashed", colour = "red",
+             linewidth = 0.6) +
+  scale_x_continuous(breaks = 0:max(diff_df$abs_diff, na.rm = TRUE)) +
+  labs(title = "Distribution of |fixated FPFP − analyzeeyedry fplp| (v5)",
+       subtitle = "Red dashed line = exact match threshold (0.5 chars)",
+       x = "Absolute difference (characters)", y = "Count") +
+  theme_bw(base_size = 11)
+```
+
+## 8.5 Cases where FPFP disagrees: inspection
+
+```{r disagreements}
+disagree <- compare_v5 |>
+  dplyr::filter(!is.na(fplp_edry), !is.na(fpfp_fix),
+                fplp_edry != fpfp_fix) |>
+  dplyr::mutate(diff = fpfp_fix - fplp_edry) |>
+  dplyr::select(trial_nr, cond, item, word_id, fplp_edry, fpfp_fix, diff) |>
+  dplyr::arrange(abs(diff) |> desc())
+
+cat(sprintf("%d rows where FPFP values differ:\n", nrow(disagree)))
+if (nrow(disagree) > 0L) {
+  print(head(disagree, 30))
+}
+```
+
+---
+
+# 9. NA comparison
+
+```{r na-comparison}
+compare_v5 |>
+  dplyr::mutate(
+    edry_na = is.na(fplp_edry),
+    fix_na  = is.na(fpfp_fix)
+  ) |>
+  dplyr::count(edry_na, fix_na) |>
+  dplyr::mutate(
+    status = dplyr::case_when(
+      !edry_na & !fix_na  ~ "Both non-NA",
+      !edry_na &  fix_na  ~ "Only analyzeeyedry has value",
+      edry_na  & !fix_na  ~ "Only fixated has value",
+      TRUE                ~ "Both NA"
+    )
+  ) |>
+  dplyr::select(status, n) |>
+  knitr::kable(caption = "NA agreement between analyzeeyedry fplp and fixated FPFP")
+```
+
+---
+
+# 10. Discussion
+
+## Sources of disagreement
+
+**Proportional vs character-boundary interpolation**: analyzeeyedry uses the
+character bounding boxes from `REGION CHAR` messages to determine exactly which
+character the fixation falls on (by finding the first character whose right
+pixel boundary exceeds the fixation's pixel x).  `fixated` uses
+`word_proportion = (avg_x − x_start) / (x_end − x_start)` and assumes equally-
+spaced characters (`fixated_char = floor(N × word_proportion) + 1`).
+
+When characters in the display are not equally wide (e.g., a proportional
+font, or characters with different widths like `i` vs `m`), the two methods
+will disagree.  Even for monospace fonts, rounding differences at character
+boundaries can cause off-by-one disagreements.
+
+**Region boundary differences**: `fixated` builds word pixel boundaries by
+merging the `REGION CHAR` bounding boxes for all non-space characters in a
+word.  analyzeeyedry converts the character-grid position back to the word
+start using the `start_R{k}` values.  Edge fixations (near a word boundary)
+may be assigned to different words by the two systems, producing FPFP
+disagreements.
+
+---
+
+```{r session-info}
+sessionInfo()
+```
