@@ -123,6 +123,9 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
   measures <- .add_subject_column(measures)
   trial_db <- .add_subject_column(trial_db)
 
+  # ---- flag: character boundary data is available ----------------------------
+  has_char_bounds <- !is.null(chars) && is.data.frame(chars) && nrow(chars) > 0L
+
   # ---- determine available trials -------------------------------------------
   trial_info    <- .shiny_trial_choices(samples, fixations, rois, measures, trial_db)
   subject_choices <- trial_info$subject_choices
@@ -184,8 +187,12 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
                              "Overlay EyeLink fixations", value = TRUE),
         shiny::checkboxInput("show_word_regions",
                              "Show word regions / boundaries", value = TRUE),
-        shiny::checkboxInput("show_char_regions",
-                             "Show character regions / boundaries", value = FALSE),
+        shiny::div(
+          id = "char_regions_container",
+          title = if (!has_char_bounds) "Disabled: no character boundary data available" else "",
+          shiny::checkboxInput("show_char_regions",
+                               "Show character regions / boundaries", value = FALSE)
+        ),
         shiny::checkboxInput("show_word_labels",
                              "Show word text labels", value = TRUE),
         shiny::checkboxInput("show_measures",
@@ -255,6 +262,11 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
     if (is.null(trial_db)) {
       shinyjs::disable("filter_display_on")
       shinyjs::disable("filter_display_off")
+    }
+
+    # -- handle missing character boundary data --------------------------------
+    if (!has_char_bounds) {
+      shinyjs::disable("show_char_regions")
     }
 
     # -- navigation buttons ---------------------------------------------------
@@ -681,8 +693,8 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
               type = "rect",
               x0 = cb$x_start[[i]], x1 = cb$x_end[[i]],
               y0 = cb$y_start[[i]], y1 = cb$y_end[[i]],
-              fillcolor = "rgba(255, 165, 0, 0.05)",
-              line = list(color = "orange", width = 0.2),
+              fillcolor = "rgba(255, 165, 0, 0.08)",
+              line = list(color = "darkorange", width = 1.0),
               layer = "below"
             )))
             hover_x <- c(hover_x, (cb$x_start[[i]] + cb$x_end[[i]]) / 2)
@@ -695,7 +707,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
               type = "line",
               x0 = cb$x_end[[i]], x1 = cb$x_end[[i]],
               y0 = 0, y1 = 1, yref = "paper",
-              line = list(color = "orange", width = 0.5, dash = "dot"),
+              line = list(color = "darkorange", width = 1.0, dash = "dot"),
               layer = "below"
             )))
           }
