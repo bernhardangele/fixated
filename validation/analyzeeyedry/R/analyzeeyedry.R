@@ -390,8 +390,8 @@ read_asc <- function(filepath, lowest_cond = 1L, highest_cond = 999L,
 #' @param width         Character-grid width: position = x + y * width
 #'                      (default 80).
 #' @return Named list of numeric vectors, each of length \code{length(region_starts)}.
-#'   Elements: ff, fp, tt, oreg, ireg, pfix, nfix, sp, gp. NA indicates no
-#'   valid data for that region on this trial.
+#'   Elements: ff, fp, tt, oreg, ireg, pfix, nfix, sp, gp, fplp. NA indicates
+#'   no valid data for that region on this trial.
 #' @export
 compute_trial_measures <- function(fix_df, region_starts, region_end_last,
                                    shorttime = 80L, longtime = 800L,
@@ -431,6 +431,7 @@ compute_trial_measures <- function(fix_df, region_starts, region_end_last,
   nfix_v <- rep(NA_real_, nreg)
   sp_v   <- rep(NA_real_, nreg)
   gp_v   <- rep(NA_real_, nreg)
+  fplp_v <- rep(NA_real_, nreg)
 
   for (r in seq_len(nreg)) {
     s_r <- region_starts[r]
@@ -620,6 +621,27 @@ compute_trial_measures <- function(fix_df, region_starts, region_end_last,
       }
       if (NV > 0L) gp_v[r] <- V
     }
+
+    # ---- First Pass Landing Position (analysis 11, poke_anal = 1) -------
+    # Character position (0-indexed from start of region) of the first valid
+    # (shorttime < duration <= longtime) fixation in the region during the
+    # first pass.  See eyedry_documentation.md §"Analysis 11: Landing
+    # Position / Launch Site" and eyedry.c land_pos().
+    {
+      NV <- 0L
+      for (i in seq_len(n_v)) {
+        p <- pos_v[i]; t <- dur_v[i]
+        if (p >= e_r && t > shorttime) break        # past region
+        if (p >= s_r && p < e_r) {
+          if (t > longtime) { NV <- 0L; break }     # long fix: discard
+          if (t <= shorttime) next                   # short fix: skip
+          # valid first-pass fixation
+          fplp_v[r] <- p - s_r                      # characters into region
+          NV <- 1L
+          break                                      # cut short
+        }
+      }
+    }
   }
 
   list(ff   = ff_v,
@@ -630,7 +652,8 @@ compute_trial_measures <- function(fix_df, region_starts, region_end_last,
        pfix = pfix_v,
        nfix = nfix_v,
        sp   = sp_v,
-       gp   = gp_v)
+       gp   = gp_v,
+       fplp = fplp_v)
 }
 
 
@@ -680,6 +703,9 @@ compute_trial_measures <- function(fix_df, region_starts, region_end_last,
 #'     \item{nfix_R1 ... nfix_R\{nregmax\}}{Number of first-pass fixations.}
 #'     \item{sp_R1 ... sp_R\{nregmax\}}{Second pass time (ms).}
 #'     \item{gp_R1 ... gp_R\{nregmax\}}{Go-past time (ms).}
+#'     \item{fplp_R1 ... fplp_R\{nregmax\}}{First pass landing position
+#'       (characters into region, 0-indexed).  Corresponds to eyedry
+#'       analysis 11 with poke_anal = 1.}
 #'   }
 #'   \code{NA} is used when there was no valid fixation in a region
 #'   (\code{NV = 0} in eyedry) or when the region does not exist for
@@ -1195,7 +1221,7 @@ assign_regions_to_fixations <- function(fixations, regions, width = 80L) {
 #'   \code{\link{analyze_eyedry}}: \code{subj}, \code{item}, \code{cond},
 #'   \code{seq}, and per-region columns for \code{ff}, \code{fp}, \code{tt},
 #'   \code{oreg}, \code{ireg}, \code{pfix}, \code{nfix}, \code{sp},
-#'   \code{gp}.
+#'   \code{gp}, \code{fplp}.
 #' @seealso \code{\link{assign_regions_to_fixations}},
 #'   \code{\link{compute_trial_measures}}, \code{\link{analyze_eyedry}}
 #' @examples
@@ -1216,7 +1242,7 @@ compute_fixation_measures <- function(fixations,
                                       width     = 80L,
                                       max_y     = 1000L,
                                       nregmax   = 7L) {
-  measures <- c("ff", "fp", "tt", "oreg", "ireg", "pfix", "nfix", "sp", "gp")
+  measures <- c("ff", "fp", "tt", "oreg", "ireg", "pfix", "nfix", "sp", "gp", "fplp")
   reg_cols  <- paste0("R", seq_len(nregmax))
   all_measure_cols <- as.character(outer(measures, reg_cols,
                                          FUN = function(m, r) paste0(m, "_", r)))
@@ -1512,7 +1538,7 @@ analyze_eyedry <- function(asc_files    = NULL,
   }
 
   # ---- Measure column names ----
-  measures  <- c("ff", "fp", "tt", "oreg", "ireg", "pfix", "nfix", "sp", "gp")
+  measures  <- c("ff", "fp", "tt", "oreg", "ireg", "pfix", "nfix", "sp", "gp", "fplp")
   reg_cols  <- paste0("R", seq_len(nregmax))
   all_measure_cols <- as.character(outer(measures, reg_cols,
                                          FUN = function(m, r) paste0(m, "_", r)))
