@@ -125,6 +125,8 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
 
   # ---- flag: character boundary data is available ----------------------------
   has_char_bounds <- !is.null(chars) && is.data.frame(chars) && nrow(chars) > 0L
+  # ---- flag: fixations have a 'removed' annotation column (clean_fixations annotate=TRUE) ----
+  has_removed_col <- !is.null(fixations) && "removed" %in% names(fixations)
 
   # ---- determine available trials -------------------------------------------
   trial_info    <- .shiny_trial_choices(samples, fixations, rois, measures, trial_db)
@@ -185,6 +187,15 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
                              "Show raw gaze samples", value = TRUE),
         shiny::checkboxInput("show_fixations",
                              "Overlay EyeLink fixations", value = TRUE),
+        shiny::div(
+          id = "removed_fixations_container",
+          title = if (!has_removed_col) paste0(
+            "Disabled: fixations tibble does not have a 'removed' column. ",
+            "Use clean_fixations(..., annotate = TRUE) to create one."
+          ) else "",
+          shiny::checkboxInput("show_removed_fixations",
+                               "Show removed fixations", value = FALSE)
+        ),
         shiny::checkboxInput("show_word_regions",
                              "Show word regions / boundaries", value = TRUE),
         shiny::div(
@@ -192,6 +203,15 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
           title = if (!has_char_bounds) "Disabled: no character boundary data available" else "",
           shiny::checkboxInput("show_char_regions",
                                "Show character regions / boundaries", value = FALSE)
+        ),
+        shiny::div(
+          id = "fp_landing_container",
+          title = if (!has_char_bounds) paste0(
+            "Disabled: requires character boundary data and first pass landing position. ",
+            "Provide character boundaries and fixation data."
+          ) else "",
+          shiny::checkboxInput("show_fp_landing",
+                               "Show first pass fixation position", value = FALSE)
         ),
         shiny::checkboxInput("show_word_labels",
                              "Show word text labels", value = TRUE),
@@ -267,7 +287,25 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
     # -- handle missing character boundary data --------------------------------
     if (!has_char_bounds) {
       shinyjs::disable("show_char_regions")
+      shinyjs::disable("show_fp_landing")
     }
+
+    # -- handle missing 'removed' annotation in fixations ---------------------
+    if (!has_removed_col) {
+      shinyjs::disable("show_removed_fixations")
+    }
+
+    # -- dynamically enable/disable fp_landing based on per-trial data --------
+    shiny::observe({
+      if (has_char_bounds) {
+        fp <- tryCatch(trial_fp_landing(), error = function(e) NULL)
+        if (is.null(fp) || nrow(fp) == 0L) {
+          shinyjs::disable("show_fp_landing")
+        } else {
+          shinyjs::enable("show_fp_landing")
+        }
+      }
+    })
 
     # -- navigation buttons ---------------------------------------------------
     shiny::observeEvent(input$prevBtn, {
@@ -425,6 +463,10 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
       }
       if (nrow(fix) == 0L) return(NULL)
       fix <- dplyr::filter(fix, .data$eye == !!eye)
+      # Exclude removed fixations (from clean_fixations annotate=TRUE) for analysis
+      if ("removed" %in% names(fix)) {
+        fix <- dplyr::filter(fix, !.data$removed)
+      }
       dt  <- display_times()
       if (input$filter_display_on  && !is.na(dt$t_on))  {
         fix <- dplyr::filter(fix, .data$start_time >= dt$t_on)
@@ -436,6 +478,41 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
       t0 <- t_zero()
       fix$time_rel_start <- fix$start_time - t0
       fix$fixation_nr    <- seq_len(nrow(fix))
+      fix
+    })
+
+    # Removed fixations for the current trial + eye (from clean_fixations annotate=TRUE)
+    trial_removed_fixations <- shiny::reactive({
+      if (!has_removed_col) return(NULL)
+      tnr  <- current_tnr()
+      eye  <- input$eye
+      fix  <- fixations
+      if (is.null(fix) || nrow(fix) == 0L) return(NULL)
+      if (has_subject_selector && "subject" %in% names(fix)) {
+        fix <- dplyr::filter(fix, .data$subject == current_subject())
+      }
+      if ("trial_nr" %in% names(fix)) {
+        fix <- dplyr::filter(fix, .data$trial_nr == tnr)
+      } else if ("trial" %in% names(fix)) {
+        fix <- dplyr::filter(fix, .data$trial == tnr)
+      }
+      if (nrow(fix) == 0L) return(NULL)
+      fix <- dplyr::filter(fix, .data$removed == TRUE)
+      if (nrow(fix) == 0L) return(NULL)
+      if ("eye" %in% names(fix)) {
+        fix <- dplyr::filter(fix, .data$eye == !!eye)
+      }
+      if (nrow(fix) == 0L) return(NULL)
+      dt  <- display_times()
+      if (input$filter_display_on  && !is.na(dt$t_on))  {
+        fix <- dplyr::filter(fix, .data$start_time >= dt$t_on)
+      }
+      if (input$filter_display_off && !is.na(dt$t_off)) {
+        fix <- dplyr::filter(fix, .data$end_time   <= dt$t_off)
+      }
+      if (nrow(fix) == 0L) return(NULL)
+      t0 <- t_zero()
+      fix$time_rel_start <- fix$start_time - t0
       fix
     })
 
@@ -477,6 +554,76 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         }
       }
       cb
+    })
+
+    # First pass landing position per word (for Feature 4/5)
+    # Computed automatically when no measures tibble is supplied; uses the
+    # measures tibble as override if it contains ffd_x / ffd_char columns.
+    trial_fp_landing <- shiny::reactive({
+      fix <- trial_fixations()
+      wb  <- trial_wb()
+      cb  <- trial_cb()
+
+      if (is.null(fix) || nrow(fix) == 0L) return(NULL)
+      if (is.null(wb) || nrow(wb) == 0L) return(NULL)
+      if (!all(c("x_start", "x_end", "y_start", "y_end") %in% names(wb))) return(NULL)
+
+      tnr <- current_tnr()
+
+      # If the measures tibble has explicit landing position columns, use them.
+      if (!is.null(measures)) {
+        wm_in <- measures
+        if (has_subject_selector && "subject" %in% names(wm_in)) {
+          wm_in <- dplyr::filter(wm_in, .data$subject == current_subject())
+        }
+        wm <- if ("trial_nr" %in% names(wm_in)) {
+          dplyr::filter(wm_in, .data$trial_nr == tnr)
+        } else if ("trial" %in% names(wm_in)) {
+          dplyr::filter(wm_in, .data$trial == tnr)
+        } else {
+          wm_in
+        }
+        if ("ffd_x" %in% names(wm) && "ffd_char" %in% names(wm) && nrow(wm) > 0L) {
+          keep   <- intersect(c("word_id", "ffd_x", "ffd_y", "ffd_char"), names(wm))
+          result <- wm[!is.na(wm$ffd_x), keep, drop = FALSE]
+          if (nrow(result) > 0L) {
+            names(result)[names(result) == "ffd_x"]   <- "fp_x"
+            if ("ffd_y" %in% names(result))
+              names(result)[names(result) == "ffd_y"] <- "fp_y"
+            names(result)[names(result) == "ffd_char"] <- "fp_char_id"
+            return(result)
+          }
+        }
+      }
+
+      # Auto-compute from fixations (Feature 4)
+      fix_work <- fix
+      if (!"trial_nr" %in% names(fix_work)) fix_work$trial_nr <- tnr
+      wb_work  <- wb
+      if (!"trial_nr" %in% names(wb_work)) wb_work$trial_nr <- tnr
+      cb_work  <- cb
+      if (!is.null(cb_work) && nrow(cb_work) > 0L &&
+          !"trial_nr" %in% names(cb_work)) {
+        cb_work$trial_nr <- tnr
+      }
+
+      tryCatch({
+        landing   <- get_landing_info(fix_work, wb_work,
+                                      character_boundaries = cb_work)
+        first_fix <- landing[
+          !is.na(landing$fixation_type) & landing$fixation_type == "first",
+          , drop = FALSE
+        ]
+        if (nrow(first_fix) == 0L) return(NULL)
+        keep_cols <- intersect(c("word_id", "avg_x", "avg_y", "fixated_char"),
+                               names(first_fix))
+        result <- first_fix[, keep_cols, drop = FALSE]
+        names(result)[names(result) == "avg_x"]      <- "fp_x"
+        if ("avg_y" %in% names(result))
+          names(result)[names(result) == "avg_y"]    <- "fp_y"
+        names(result)[names(result) == "fixated_char"] <- "fp_char_id"
+        result
+      }, error = function(e) NULL)
     })
 
     # Word measures (FFD, GD, TVT) – computed only when needed
@@ -575,10 +722,29 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         }
       }
 
+      # Removed fixations (for display when checkbox is ticked)
+      removed_fix <- if (has_removed_col && isTRUE(input$show_removed_fixations)) {
+        trial_removed_fixations()
+      } else {
+        NULL
+      }
+      if (!is.null(removed_fix) && !is.null(input$time_limit) &&
+          "time_rel_start" %in% names(removed_fix)) {
+        removed_fix <- dplyr::filter(removed_fix,
+                                     .data$time_rel_start <= input$time_limit)
+        if (nrow(removed_fix) == 0L) removed_fix <- NULL
+      }
+
       has_full_roi <- !is.null(wb) && nrow(wb) > 0L &&
         all(c("x_start", "x_end", "y_start", "y_end") %in% names(wb))
       has_x_end    <- !is.null(wb) && nrow(wb) > 0L && "x_end" %in% names(wb)
       has_words    <- !is.null(wb) && nrow(wb) > 0L && "word" %in% names(wb)
+      has_full_cb  <- !is.null(cb) && nrow(cb) > 0L &&
+        all(c("x_start", "x_end", "y_start", "y_end") %in% names(cb))
+      # When both region types are visible, word regions are drawn on top of
+      # char regions (higher opacity) so it is clear which word each char belongs to.
+      show_both_regions <- isTRUE(input$show_char_regions) && has_full_cb &&
+        isTRUE(input$show_word_regions) && has_full_roi
 
       # Median y for label positioning
       y_median <- if (nrow(samp) > 0L) {
@@ -645,51 +811,28 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         }
       }
 
-      shapes <- list()
+      # Shapes are collected in separate lists then combined so that char
+      # shapes (bottom) are drawn underneath word shapes (top), ensuring each
+      # character is visually associated with its word when both are visible.
+      char_shapes <- list()
+      word_shapes <- list()
+      bar_shapes  <- list()
       # invisible points for tooltips on ROIs and bars
       hover_x <- numeric()
       hover_y <- numeric()
       hover_txt <- character()
 
-      # Word region rectangles / boundary lines
-      if (input$show_word_regions && !is.null(wb) && nrow(wb) > 0L) {
-        if (has_full_roi) {
-          for (i in seq_len(nrow(wb))) {
-            wb_text <- if (has_words) paste0("Word: ", wb$word[[i]]) else paste0("Region: ", wb$word_id[[i]])
-            shapes <- append(shapes, list(list(
-              type = "rect",
-              x0 = wb$x_start[[i]], x1 = wb$x_end[[i]],
-              y0 = wb$y_start[[i]], y1 = wb$y_end[[i]],
-              fillcolor = "rgba(70, 130, 180, 0.07)",
-              line = list(color = "steelblue", width = 0.3),
-              layer = "below"
-            )))
-            hover_x <- c(hover_x, (wb$x_start[[i]] + wb$x_end[[i]]) / 2)
-            hover_y <- c(hover_y, (wb$y_start[[i]] + wb$y_end[[i]]) / 2)
-            hover_txt <- c(hover_txt, wb_text)
-          }
-        } else if (has_x_end) {
-          for (i in seq_len(nrow(wb))) {
-            shapes <- append(shapes, list(list(
-              type = "line",
-              x0 = wb$x_end[[i]], x1 = wb$x_end[[i]],
-              y0 = 0, y1 = 1, yref = "paper",
-              line = list(color = "gray", width = 1, dash = "dash"),
-              layer = "below"
-            )))
-          }
-        }
-      }
-
-      # Character region rectangles / boundary lines
-      if (input$show_char_regions && !is.null(cb) && nrow(cb) > 0L) {
-        has_full_cb <- all(c("x_start", "x_end", "y_start", "y_end") %in% names(cb))
+      # Character region rectangles / boundary lines (drawn first = underneath)
+      if (isTRUE(input$show_char_regions) && !is.null(cb) && nrow(cb) > 0L) {
         has_cb_x_end <- "x_end" %in% names(cb)
-        
         if (has_full_cb) {
           for (i in seq_len(nrow(cb))) {
-            cb_text <- if ("char" %in% names(cb)) paste0("Char: ", cb$char[[i]]) else paste0("Char: ", cb$char_id[[i]])
-            shapes <- append(shapes, list(list(
+            cb_text <- if ("char" %in% names(cb)) {
+              paste0("Char: ", cb$char[[i]], " (word ", cb$word_id[[i]], ")")
+            } else {
+              paste0("Char: ", cb$char_id[[i]], " (word ", cb$word_id[[i]], ")")
+            }
+            char_shapes <- append(char_shapes, list(list(
               type = "rect",
               x0 = cb$x_start[[i]], x1 = cb$x_end[[i]],
               y0 = cb$y_start[[i]], y1 = cb$y_end[[i]],
@@ -703,7 +846,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
           }
         } else if (has_cb_x_end) {
           for (i in seq_len(nrow(cb))) {
-            shapes <- append(shapes, list(list(
+            char_shapes <- append(char_shapes, list(list(
               type = "line",
               x0 = cb$x_end[[i]], x1 = cb$x_end[[i]],
               y0 = 0, y1 = 1, yref = "paper",
@@ -714,8 +857,43 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         }
       }
 
+      # Word region rectangles / boundary lines (drawn on top of char regions)
+      if (isTRUE(input$show_word_regions) && !is.null(wb) && nrow(wb) > 0L) {
+        # When both region types are shown, use a more visible fill so the
+        # word colour is clearly overlaid on the character regions.
+        word_fill       <- if (show_both_regions) "rgba(70, 130, 180, 0.22)" else "rgba(70, 130, 180, 0.07)"
+        word_line_width <- if (show_both_regions) 0.8 else 0.3
+
+        if (has_full_roi) {
+          for (i in seq_len(nrow(wb))) {
+            wb_text <- if (has_words) paste0("Word: ", wb$word[[i]]) else paste0("Region: ", wb$word_id[[i]])
+            word_shapes <- append(word_shapes, list(list(
+              type = "rect",
+              x0 = wb$x_start[[i]], x1 = wb$x_end[[i]],
+              y0 = wb$y_start[[i]], y1 = wb$y_end[[i]],
+              fillcolor = word_fill,
+              line = list(color = "steelblue", width = word_line_width),
+              layer = "below"
+            )))
+            hover_x <- c(hover_x, (wb$x_start[[i]] + wb$x_end[[i]]) / 2)
+            hover_y <- c(hover_y, (wb$y_start[[i]] + wb$y_end[[i]]) / 2)
+            hover_txt <- c(hover_txt, wb_text)
+          }
+        } else if (has_x_end) {
+          for (i in seq_len(nrow(wb))) {
+            word_shapes <- append(word_shapes, list(list(
+              type = "line",
+              x0 = wb$x_end[[i]], x1 = wb$x_end[[i]],
+              y0 = 0, y1 = 1, yref = "paper",
+              line = list(color = "gray", width = 1, dash = "dash"),
+              layer = "below"
+            )))
+          }
+        }
+      }
+
       # Word text labels
-      if (input$show_word_labels && has_words) {
+      if (isTRUE(input$show_word_labels) && has_words) {
         label_x <- if (has_full_roi && "x_start" %in% names(wb)) {
           (wb$x_start + wb$x_end) / 2
         } else if (has_x_end) {
@@ -728,9 +906,32 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         } else {
           rep(y_median, nrow(wb))
         }
+        # When character regions are also shown, shift word labels upward
+        # (smaller y in screen coordinates = visually higher) to prevent
+        # overlap with the character letter labels.
+        if (show_both_regions && has_full_roi) {
+          char_height_est <- if (nrow(cb) > 0L) {
+            mean(abs(cb$y_end - cb$y_start), na.rm = TRUE)
+          } else {
+            20
+          }
+          label_y <- label_y - char_height_est * 0.65
+        }
         p <- plotly::add_text(
           p, x = label_x, y = label_y, text = wb$word,
           textfont = list(color = "gray20", size = 11),
+          hoverinfo = "none", showlegend = FALSE
+        )
+      }
+
+      # Character letter labels (one per char region when char boundaries shown)
+      if (isTRUE(input$show_char_regions) && has_full_cb && "char" %in% names(cb)) {
+        char_label_x <- (cb$x_start + cb$x_end) / 2
+        char_label_y <- (cb$y_start + cb$y_end) / 2
+        p <- plotly::add_text(
+          p, x = char_label_x, y = char_label_y,
+          text = as.character(cb$char),
+          textfont = list(color = "darkorange", size = 8),
           hoverinfo = "none", showlegend = FALSE
         )
       }
@@ -749,22 +950,22 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
                           !is.na(m_df$tvt)), , drop = FALSE]
           if (nrow(m_df) > 0L) {
             bar_scale <- 0.5
-            
+
             for (i in seq_len(nrow(m_df))) {
               x0 <- m_df$x_start[[i]]
               x1 <- m_df$x_end[[i]]
               y1 <- m_df$y_start[[i]]
-              
+
               bw <- (x1 - x0) * 0.25
               gap <- bw * 0.08
-              
+
               # FFD
               if (!is.na(m_df$ffd[[i]])) {
                 bx0 <- x0 + gap
                 bx1 <- x0 + bw
                 by0 <- y1 - m_df$ffd[[i]] * bar_scale
                 by1 <- y1
-                shapes <- append(shapes, list(list(
+                bar_shapes <- append(bar_shapes, list(list(
                   type = "rect", x0 = bx0, x1 = bx1, y0 = by0, y1 = by1,
                   fillcolor = "rgba(46, 204, 113, 0.6)",
                   line = list(color = "#27ae60", width = 0.3)
@@ -779,7 +980,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
                 bx1 <- x0 + bw * 2 + gap
                 by0 <- y1 - m_df$gd[[i]] * bar_scale
                 by1 <- y1
-                shapes <- append(shapes, list(list(
+                bar_shapes <- append(bar_shapes, list(list(
                   type = "rect", x0 = bx0, x1 = bx1, y0 = by0, y1 = by1,
                   fillcolor = "rgba(155, 89, 182, 0.6)",
                   line = list(color = "#8e44ad", width = 0.3)
@@ -794,7 +995,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
                 bx1 <- x0 + bw * 3 + gap * 2
                 by0 <- y1 - m_df$tvt[[i]] * bar_scale
                 by1 <- y1
-                shapes <- append(shapes, list(list(
+                bar_shapes <- append(bar_shapes, list(list(
                   type = "rect", x0 = bx0, x1 = bx1, y0 = by0, y1 = by1,
                   fillcolor = "rgba(52, 152, 219, 0.6)",
                   line = list(color = "#2980b9", width = 0.3)
@@ -808,6 +1009,8 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         }
       }
 
+      # Combine shapes: char (bottom) → word (middle) → bars (top within "below" layer)
+      shapes <- c(char_shapes, word_shapes, bar_shapes)
       p <- plotly::layout(p, shapes = shapes)
 
       # Add dummy scatter trace for shapes tooltips
@@ -911,6 +1114,97 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
           hoverinfo = "text",
           name = "Fixations"
         )
+      }
+
+      # Removed fixations (grey X markers, no connecting path, with reason tooltip)
+      if (!is.null(removed_fix) && nrow(removed_fix) > 0L) {
+        reason_col <- if ("reason" %in% names(removed_fix)) {
+          removed_fix$reason
+        } else {
+          rep(NA_character_, nrow(removed_fix))
+        }
+        hover_txt_removed <- paste0(
+          "Removed Fix<br>",
+          "Reason: ", ifelse(is.na(reason_col), "unknown", reason_col), "<br>",
+          "Dur: ", round(removed_fix$duration), " ms<br>",
+          "X: ", round(removed_fix$avg_x), "<br>",
+          "Y: ", round(removed_fix$avg_y)
+        )
+        p <- plotly::add_trace(
+          p, data = removed_fix,
+          x = ~avg_x, y = ~avg_y,
+          type = "scatter",
+          mode = "markers",
+          marker = list(
+            color = "rgba(150, 150, 150, 0.55)",
+            size = 10,
+            symbol = "x",
+            line = list(color = "rgba(120, 120, 120, 0.8)", width = 1.5)
+          ),
+          text = hover_txt_removed,
+          hoverinfo = "text",
+          name = "Removed Fixations"
+        )
+      }
+
+      # First pass landing position: downward triangle at the fixated character
+      if (isTRUE(input$show_fp_landing) && has_full_cb) {
+        fp <- trial_fp_landing()
+        if (!is.null(fp) && nrow(fp) > 0L) {
+          arrow_x   <- numeric(0)
+          arrow_y   <- numeric(0)
+          arrow_txt <- character(0)
+
+          for (i in seq_len(nrow(fp))) {
+            wid     <- fp$word_id[i]
+            char_id <- if ("fp_char_id" %in% names(fp)) fp$fp_char_id[i] else NA_integer_
+            if (is.na(wid)) next
+
+            # Locate character bounding box
+            cb_word <- cb[cb$word_id == wid, , drop = FALSE]
+            if (nrow(cb_word) == 0L) next
+
+            if (!is.na(char_id) && "char_id" %in% names(cb_word)) {
+              cb_char <- cb_word[cb_word$char_id == char_id, , drop = FALSE]
+              if (nrow(cb_char) == 0L) cb_char <- cb_word[1L, , drop = FALSE]
+            } else {
+              cb_char <- cb_word[1L, , drop = FALSE]
+            }
+
+            cx <- (cb_char$x_start[1L] + cb_char$x_end[1L]) / 2
+            cy <- cb_char$y_start[1L]   # top of character region (visually above char)
+
+            word_lbl <- if (has_words) {
+              wrow <- wb[wb$word_id == wid, , drop = FALSE]
+              if (nrow(wrow) > 0L) as.character(wrow$word[1L]) else as.character(wid)
+            } else {
+              as.character(wid)
+            }
+            arrow_x   <- c(arrow_x, cx)
+            arrow_y   <- c(arrow_y, cy)
+            arrow_txt <- c(arrow_txt, paste0(
+              "First pass landing<br>",
+              "Word: ", word_lbl, "<br>",
+              "Char: ", if (!is.na(char_id)) char_id else "?"
+            ))
+          }
+
+          if (length(arrow_x) > 0L) {
+            p <- plotly::add_markers(
+              p, x = arrow_x, y = arrow_y,
+              marker = list(
+                symbol = "triangle-down",
+                size   = 14,
+                color  = "rgba(0, 100, 220, 0.85)",
+                line   = list(color = "rgba(0, 60, 160, 1)", width = 1.5)
+              ),
+              text      = arrow_txt,
+              hoverinfo = "text",
+              name      = "First Pass Landing",
+              showlegend = FALSE
+            )
+          }
+        }
       }
 
       p |> plotly::config(displayModeBar = TRUE, displaylogo = FALSE)
