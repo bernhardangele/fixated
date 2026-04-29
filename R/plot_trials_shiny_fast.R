@@ -265,26 +265,6 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
       if (has_subject_selector) as.character(input$subject_sel) else NULL
     })
 
-    # -- zoom-level tracking for adaptive char label sizing -------------------
-    zoom_xrange <- shiny::reactiveVal(NULL)
-    # Reset stored zoom whenever the user navigates to a different trial
-    shiny::observeEvent(input$trial_sel, { zoom_xrange(NULL) }, ignoreInit = TRUE)
-    shiny::observeEvent(
-      plotly::event_data("plotly_relayout", source = "gaze_plot"),
-      {
-        ev <- plotly::event_data("plotly_relayout", source = "gaze_plot")
-        if (!is.null(ev)) {
-          x0 <- ev[["xaxis.range[0]"]]
-          x1 <- ev[["xaxis.range[1]"]]
-          if (!is.null(x0) && !is.null(x1)) {
-            zoom_xrange(c(as.numeric(x0), as.numeric(x1)))
-          } else {
-            zoom_xrange(NULL)  # double-click auto-range reset
-          }
-        }
-      }
-    )
-
     mapping_current <- shiny::reactive({
       if (!has_subject_selector) return(mapping)
       mapping[mapping$subject == current_subject(), , drop = FALSE]
@@ -775,23 +755,6 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         540
       }
 
-      # Char label size: 8 pt at full zoom, scaled up proportionally when zoomed in
-      full_xrange_data <- if (nrow(samp) > 0L) {
-        range(samp$x, na.rm = TRUE)
-      } else if (!is.null(wb) && nrow(wb) > 0L && "x_start" %in% names(wb)) {
-        c(min(wb$x_start, na.rm = TRUE), max(wb$x_end, na.rm = TRUE))
-      } else {
-        NULL
-      }
-      zr <- zoom_xrange()
-      char_label_size <- if (is.null(zr) || is.null(full_xrange_data)) {
-        8
-      } else {
-        full_width <- diff(full_xrange_data)
-        zoom_width <- diff(zr)
-        if (zoom_width <= 0 || full_width <= 0) 8 else max(8, round(8 * full_width / zoom_width))
-      }
-
       # --- Start Plotly Object ---
       p <- plotly::plot_ly(source = "gaze_plot")
       
@@ -963,7 +926,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         p <- plotly::add_text(
           p, x = char_label_x, y = char_label_y,
           text = as.character(cb$char),
-          textfont = list(color = "darkorange", size = char_label_size),
+          textfont = list(color = "darkorange", size = 8),
           hoverinfo = "none", showlegend = FALSE
         )
       }
