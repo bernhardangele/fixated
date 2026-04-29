@@ -1,0 +1,580 @@
+---
+title: "Validation v6: Character-Boundary First Pass Fixation Position (FPFP)"
+author: "Auto-generated validation report"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# 1. Introduction
+
+This is the sixth validation report comparing **fixated** against
+**analyzeeyedry** on `C1L1.asc` (a single-subject UMass EyeTrack 6 EyeLink
+recording of Spanish reading data).
+
+The primary goal of this report is to validate the **character-boundary-based
+First Pass Fixation Position (FPFP)** computed by `get_landing_info()` using
+the new `character_boundaries` argument (introduced alongside v5) against
+the **First Pass Landing Position (`fplp`)** computed by analyzeeyedry.
+
+## Comparison with v5
+
+v5 used the **monospace / proportional** method:
+
+> `fixated_char = floor(N × word_proportion) + 1`
+
+where `word_proportion = (avg_x − x_start) / (x_end − x_start)` assumes
+characters are equally wide.
+
+v6 uses the **character-boundary** method:
+
+> For each fixation, find the character from the `REGION CHAR` bounding boxes
+> whose pixel interval `[x_start, x_end]` contains `avg_x`.
+
+This is the same information that **analyzeeyedry** uses (it locates the
+character by comparing the fixation's pixel x against the right-pixel boundary
+of each character in order).  We therefore expect **near-perfect agreement**
+between `fixated` v6 and analyzeeyedry `fplp`.
+
+The analysis uses the same parameter set as v4 and v5 (`shorttime = 80`,
+`longtime = 800`, `ttcutoff = 4000`, `truncate_at_display_on = TRUE`).
+
+---
+
+# 2. Setup
+
+```{r packages}
+pkg_root          <- file.path(getwd(), "..")
+analyzeeyedry_dir <- file.path(getwd(), "analyzeeyedry")
+
+if (!requireNamespace("analyzeeyedry", quietly = TRUE)) {
+  install.packages(analyzeeyedry_dir, repos = NULL, type = "source")
+}
+if (!requireNamespace("fixated", quietly = TRUE)) {
+  install.packages(pkg_root, repos = NULL, type = "source")
+}
+
+library(analyzeeyedry)
+library(fixated)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(knitr)
+
+ASC_FILE  <- file.path(pkg_root, "data_to_incorporate", "C1L1.asc")
+SHORTTIME <- 80L
+LONGTIME  <- 800L
+TTCUTOFF  <- 4000L
+
+stopifnot(file.exists(ASC_FILE))
+cat("ASC file:", ASC_FILE, "\n")
+cat("fixated version:", as.character(packageVersion("fixated")), "\n")
+cat("analyzeeyedry version:", as.character(packageVersion("analyzeeyedry")), "\n")
+```
+
+---
+
+# 3. Parse C1L1.asc with `read_eyetrack_asc()`
+
+```{r parse-eyetrack}
+et <- read_eyetrack_asc(ASC_FILE, trial_pattern = "^[A-Za-z]")
+cat(sprintf("Parsed %d trials\n", nrow(et$trial_db)))
+cat(sprintf("Fixations: %d rows\n", nrow(et$fixations)))
+cat(sprintf("Word boundaries: %d rows across %d trials\n",
+            nrow(et$word_boundaries),
+            n_distinct(et$word_boundaries$trial_nr)))
+cat(sprintf("Character boundaries: %d rows across %d trials\n",
+            nrow(et$character_boundaries),
+            n_distinct(et$character_boundaries$trial_nr)))
+```
+
+Confirm character boundary coverage – every word should have at least one
+character boundary entry:
+
+```{r char-coverage}
+cb_words <- et$character_boundaries |>
+  dplyr::distinct(trial_nr, word_id)
+
+wb_words <- et$word_boundaries |>
+  dplyr::distinct(trial_nr, word_id)
+
+coverage <- dplyr::left_join(wb_words, cb_words |> dplyr::mutate(has_cb = TRUE),
+                              by = c("trial_nr", "word_id"))
+
+cat(sprintf("Word boundaries with character data: %d / %d (%.1f%%)\n",
+            sum(!is.na(coverage$has_cb)), nrow(coverage),
+            100 * mean(!is.na(coverage$has_cb))))
+
+# Preview first few character boundary rows
+head(et$character_boundaries, 10)
+```
+
+---
+
+# 4. analyzeeyedry reference analysis
+
+```{r eyedry-analysis}
+word_regions_edry <- asc_to_cnt(
+  ASC_FILE, trial_pattern = "^[A-Za-z]",
+  spillover_gap = 1L, spillover_size = 20L)
+fix_edry   <- asc_to_fixations(ASC_FILE, subj = 1L, trial_pattern = "^[A-Za-z]")
+fix_edry_r <- assign_regions_to_fixations(fix_edry, word_regions_edry)
+nregmax_val <- max(word_regions_edry$nreg, na.rm = TRUE)
+
+measures_edry <- compute_fixation_measures(
+  fix_edry_r, word_regions_edry,
+  shorttime = SHORTTIME, longtime = LONGTIME,
+  ttcutoff  = TTCUTOFF,
+  nregmax   = nregmax_val)
+cat(sprintf("analyzeeyedry: measures for %d trials\n", nrow(measures_edry)))
+```
+
+---
+
+# 5. Compute fixated FPFP
+
+## 5.1 Pre-processing: truncate at display onset
+
+```{r filter-fixations}
+fix_raw <- et$fixations
+tdb     <- et$trial_db
+
+fix_filtered <- fix_raw |>
+  dplyr::left_join(
+    tdb[, c("trial_nr", "t_display_on", "t_display_off")],
+    by = "trial_nr") |>
+  dplyr::filter(end_time > t_display_on) |>
+  dplyr::mutate(
+    straddle   = start_time <= t_display_on,
+    start_time = dplyr::if_else(straddle, t_display_on, start_time),
+    duration   = end_time - start_time
+  ) |>
+  dplyr::select(-t_display_on, -t_display_off, -straddle)
+
+cat(sprintf("Fixations after display-on filter: %d (raw: %d)\n",
+            nrow(fix_filtered), nrow(fix_raw)))
+```
+
+## 5.2 Landing info – monospace method (v5 baseline)
+
+```{r landing-monospace}
+fix_land_mono <- get_landing_info(fix_filtered, et$word_boundaries)
+cat(sprintf("Monospace: fixations with word assignment: %d / %d\n",
+            sum(!is.na(fix_land_mono$word_id)), nrow(fix_land_mono)))
+```
+
+## 5.3 Landing info – character-boundary method (v6, new)
+
+```{r landing-charbounds}
+fix_land_cb <- get_landing_info(
+  fix_filtered,
+  et$word_boundaries,
+  character_boundaries = et$character_boundaries
+)
+cat(sprintf("Char-boundary: fixations with word assignment: %d / %d\n",
+            sum(!is.na(fix_land_cb$word_id)), nrow(fix_land_cb)))
+
+# How often does the character-boundary method give a different answer?
+n_diff <- sum(
+  !is.na(fix_land_mono$fixated_char) & !is.na(fix_land_cb$fixated_char) &
+  fix_land_mono$fixated_char != fix_land_cb$fixated_char
+)
+n_both <- sum(!is.na(fix_land_mono$fixated_char) &
+              !is.na(fix_land_cb$fixated_char))
+cat(sprintf(
+  "fixated_char differs between methods: %d / %d fixations (%.1f%%)\n",
+  n_diff, n_both, 100 * n_diff / max(n_both, 1L)))
+```
+
+## 5.4 Extract FPFP for each trial × word
+
+The helper below mirrors the FFD loop (same as v5) but is applied twice – once
+for each landing method.
+
+```{r compute-fpfp}
+compute_fpfp <- function(fix_land, word_boundaries,
+                          shorttime = 80L, longtime = 800L) {
+  trials <- sort(unique(fix_land$trial_nr))
+  result_rows <- vector("list", length(trials))
+  ri <- 1L
+
+  for (tr in trials) {
+    tf <- fix_land[fix_land$trial_nr == tr, ]
+    tf <- tf[order(tf$start_time), ]
+
+    wb_tr <- word_boundaries[word_boundaries$trial_nr == tr, ]
+
+    for (w in sort(unique(wb_tr$word_id))) {
+      roi_row <- wb_tr[wb_tr$word_id == w, ]
+      if (nrow(roi_row) == 0L) next
+
+      x_s <- roi_row$x_start[[1L]]
+      x_e <- roi_row$x_end[[1L]]
+
+      px    <- tf$avg_x
+      dur   <- tf$duration
+      fc    <- tf$fixated_char
+      n_fix <- nrow(tf)
+
+      in_r   <- px >= x_s & px <= x_e
+      past_r <- px >  x_e
+      is_sht <- dur <= shorttime
+      is_lng <- dur >  longtime
+
+      fpfp_val <- NA_integer_
+      for (i in seq_len(n_fix)) {
+        if (past_r[i] && !is_sht[i]) break
+        if (in_r[i]) {
+          if (is_lng[i]) break
+          if (is_sht[i]) next
+          if (!is.na(fc[i])) {
+            fpfp_val <- as.integer(fc[i]) - 1L   # convert to 0-indexed
+          }
+          break
+        }
+      }
+
+      result_rows[[ri]] <- data.frame(
+        trial_nr = tr,
+        word_id  = as.integer(w),
+        fpfp     = fpfp_val,
+        stringsAsFactors = FALSE)
+      ri <- ri + 1L
+    }
+  }
+  dplyr::bind_rows(result_rows[seq_len(ri - 1L)])
+}
+
+fpfp_mono <- compute_fpfp(fix_land_mono, et$word_boundaries,
+                           shorttime = SHORTTIME, longtime = LONGTIME) |>
+  dplyr::rename(fpfp_mono = fpfp)
+
+fpfp_cb <- compute_fpfp(fix_land_cb, et$word_boundaries,
+                         shorttime = SHORTTIME, longtime = LONGTIME) |>
+  dplyr::rename(fpfp_cb = fpfp)
+
+cat(sprintf("Monospace FPFP: %d trial × word pairs, %d non-NA\n",
+            nrow(fpfp_mono), sum(!is.na(fpfp_mono$fpfp_mono))))
+cat(sprintf("Char-boundary FPFP: %d trial × word pairs, %d non-NA\n",
+            nrow(fpfp_cb), sum(!is.na(fpfp_cb$fpfp_cb))))
+```
+
+---
+
+# 6. Reshape analyzeeyedry output
+
+```{r reshape-edry}
+trial_key <- dplyr::tibble(
+  trial_nr = seq_len(nrow(et$trial_db)),
+  cond     = et$trial_db$cond,
+  item     = et$trial_db$item)
+
+pivot_edry_long <- function(wide_df, trial_key,
+                             measures = c("ff","fp","tt","gp","oreg","ireg",
+                                          "pfix","nfix","sp","fplp")) {
+  meas_pat  <- paste0("^(", paste(measures, collapse="|"), ")_R\\d+$")
+  meas_cols <- names(wide_df)[grepl(meas_pat, names(wide_df))]
+  long <- wide_df |>
+    tidyr::pivot_longer(cols = dplyr::all_of(meas_cols),
+                        names_to  = c("measure","word_id"),
+                        names_pattern = "^(.+)_R(\\d+)$",
+                        values_to = "value") |>
+    dplyr::mutate(word_id = as.integer(word_id)) |>
+    tidyr::pivot_wider(names_from = measure, values_from = value) |>
+    dplyr::rename(ffd=ff, gd=fp, tvt=tt, gpt=gp) |>
+    dplyr::left_join(trial_key, by = c("cond", "item"))
+  long
+}
+
+edry_long <- pivot_edry_long(measures_edry, trial_key)
+cat("analyzeeyedry long format:", nrow(edry_long), "rows\n")
+```
+
+---
+
+# 7. Merge and compare
+
+```{r merge}
+compare_v6 <- edry_long |>
+  dplyr::select(trial_nr, cond, item, word_id, fplp_edry = fplp) |>
+  dplyr::inner_join(fpfp_mono, by = c("trial_nr", "word_id")) |>
+  dplyr::inner_join(fpfp_cb,   by = c("trial_nr", "word_id")) |>
+  dplyr::arrange(trial_nr, word_id)
+
+cat(sprintf("Comparison table: %d rows\n", nrow(compare_v6)))
+cat(sprintf("Rows with edry fplp non-NA: %d\n",   sum(!is.na(compare_v6$fplp_edry))))
+cat(sprintf("Rows with mono fpfp non-NA: %d\n",   sum(!is.na(compare_v6$fpfp_mono))))
+cat(sprintf("Rows with cb fpfp non-NA: %d\n",     sum(!is.na(compare_v6$fpfp_cb))))
+cat(sprintf("Rows with all three non-NA: %d\n",
+            sum(!is.na(compare_v6$fplp_edry) &
+                !is.na(compare_v6$fpfp_mono) &
+                !is.na(compare_v6$fpfp_cb))))
+```
+
+---
+
+# 8. Agreement analysis
+
+## 8.1 Summary statistics
+
+```{r summary-stats}
+full_summary <- function(df, col_edry, col_fix, label) {
+  d    <- df[[col_fix]] - df[[col_edry]]
+  ref  <- pmax(abs(df[[col_edry]]), 1)
+  re   <- abs(d) / ref
+  both <- !is.na(df[[col_edry]]) & !is.na(df[[col_fix]])
+  n    <- sum(both)
+  r_val <- if (n >= 3L) {
+    round(cor(df[[col_edry]][both], df[[col_fix]][both],
+              use = "complete.obs"), 3)
+  } else NA_real_
+  data.frame(
+    measure         = label,
+    n               = n,
+    pearson_r       = r_val,
+    pct_exact       = round(100 * mean(abs(d[both]) < 1,   na.rm = TRUE), 1),
+    pct_1char       = round(100 * mean(abs(d[both]) <= 1,  na.rm = TRUE), 1),
+    pct_2char       = round(100 * mean(abs(d[both]) <= 2,  na.rm = TRUE), 1),
+    mean_abs_diff   = round(mean(abs(d[both]), na.rm = TRUE), 2),
+    median_abs_diff = round(median(abs(d[both]), na.rm = TRUE), 2),
+    stringsAsFactors = FALSE
+  )
+}
+
+summary_tbl <- dplyr::bind_rows(
+  full_summary(compare_v6, "fplp_edry", "fpfp_mono",
+               "Monospace (v5 baseline)"),
+  full_summary(compare_v6, "fplp_edry", "fpfp_cb",
+               "Char-boundary (v6, new)")
+)
+
+knitr::kable(
+  summary_tbl,
+  col.names = c("Method", "N", "r",
+                "% exact", "% ≤1 char", "% ≤2 chars",
+                "Mean |diff| (chars)", "Median |diff| (chars)"),
+  caption = paste0("v6: agreement between fixated FPFP methods ",
+                   "and analyzeeyedry fplp.  Both measures 0-indexed.")
+)
+```
+
+The character-boundary method (v6) should show substantially better agreement
+(higher *r*, higher % exact, lower mean absolute difference) compared to the
+monospace method (v5 baseline) because it uses the same `REGION CHAR` pixel
+data as analyzeeyedry.
+
+## 8.2 Scatter plots
+
+```{r scatter-plots, fig.width=10, fig.height=5}
+plot_mono <- compare_v6 |>
+  dplyr::filter(!is.na(fplp_edry), !is.na(fpfp_mono)) |>
+  dplyr::mutate(method = "Monospace (v5)", fpfp = fpfp_mono)
+
+plot_cb <- compare_v6 |>
+  dplyr::filter(!is.na(fplp_edry), !is.na(fpfp_cb)) |>
+  dplyr::mutate(method = "Char-boundary (v6)", fpfp = fpfp_cb)
+
+plot_df <- dplyr::bind_rows(plot_mono, plot_cb)
+
+ggplot(plot_df, aes(x = fplp_edry, y = fpfp)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_jitter(alpha = 0.35, size = 0.9, colour = "#2166ac",
+              width = 0.2, height = 0.2) +
+  facet_wrap(~method) +
+  labs(title = "FPFP: analyzeeyedry fplp vs fixated (both methods)",
+       subtitle = "Both measures 0-indexed; dashed = perfect agreement",
+       x = "analyzeeyedry fplp (0-indexed)",
+       y = "fixated FPFP (0-indexed)") +
+  theme_bw(base_size = 11)
+```
+
+## 8.3 Distribution of absolute differences
+
+```{r diff-distribution, fig.width=10, fig.height=4}
+diff_df <- dplyr::bind_rows(
+  compare_v6 |>
+    dplyr::filter(!is.na(fplp_edry), !is.na(fpfp_mono)) |>
+    dplyr::mutate(abs_diff = abs(fpfp_mono - fplp_edry),
+                  method   = "Monospace (v5)"),
+  compare_v6 |>
+    dplyr::filter(!is.na(fplp_edry), !is.na(fpfp_cb)) |>
+    dplyr::mutate(abs_diff = abs(fpfp_cb - fplp_edry),
+                  method   = "Char-boundary (v6)")
+)
+
+ggplot(diff_df, aes(x = abs_diff, fill = method)) +
+  geom_histogram(binwidth = 1, colour = "white", alpha = 0.8,
+                 position = "identity") +
+  geom_vline(xintercept = 0.5, linetype = "dashed", colour = "red",
+             linewidth = 0.6) +
+  scale_x_continuous(breaks = 0:max(diff_df$abs_diff, na.rm = TRUE)) +
+  scale_fill_manual(values = c("Monospace (v5)"    = "#2166ac",
+                               "Char-boundary (v6)" = "#d6604d")) +
+  facet_wrap(~method) +
+  labs(title = "Distribution of |fixated FPFP − analyzeeyedry fplp|",
+       subtitle = "Red dashed line = exact match threshold (0.5 chars)",
+       x = "Absolute difference (characters)", y = "Count",
+       fill = "Method") +
+  theme_bw(base_size = 11) +
+  theme(legend.position = "none")
+```
+
+## 8.4 Cross-tabulation – character-boundary method
+
+```{r crosstab-cb}
+both_known_cb <- compare_v6 |>
+  dplyr::filter(!is.na(fplp_edry), !is.na(fpfp_cb))
+
+ct_cb <- table(edry    = both_known_cb$fplp_edry,
+               fixated = both_known_cb$fpfp_cb,
+               useNA   = "ifany")
+cat("Cross-tabulation of fplp (analyzeeyedry) vs fpfp_cb (char-boundary):\n")
+print(ct_cb)
+
+n_both_cb  <- nrow(both_known_cb)
+n_match_cb <- sum(both_known_cb$fplp_edry == both_known_cb$fpfp_cb, na.rm = TRUE)
+cat(sprintf("\nExact match: %d / %d (%.1f%%)\n",
+            n_match_cb, n_both_cb, 100 * n_match_cb / max(n_both_cb, 1L)))
+```
+
+## 8.5 Cross-tabulation – monospace method (v5 baseline)
+
+```{r crosstab-mono}
+both_known_mono <- compare_v6 |>
+  dplyr::filter(!is.na(fplp_edry), !is.na(fpfp_mono))
+
+ct_mono <- table(edry    = both_known_mono$fplp_edry,
+                 fixated = both_known_mono$fpfp_mono,
+                 useNA   = "ifany")
+cat("Cross-tabulation of fplp (analyzeeyedry) vs fpfp_mono (monospace):\n")
+print(ct_mono)
+
+n_both_mono  <- nrow(both_known_mono)
+n_match_mono <- sum(both_known_mono$fplp_edry == both_known_mono$fpfp_mono,
+                    na.rm = TRUE)
+cat(sprintf("\nExact match: %d / %d (%.1f%%)\n",
+            n_match_mono, n_both_mono,
+            100 * n_match_mono / max(n_both_mono, 1L)))
+```
+
+## 8.6 Cases where the character-boundary method still disagrees with analyzeeyedry
+
+```{r disagreements-cb}
+disagree_cb <- compare_v6 |>
+  dplyr::filter(!is.na(fplp_edry), !is.na(fpfp_cb),
+                fplp_edry != fpfp_cb) |>
+  dplyr::mutate(diff_cb = fpfp_cb - fplp_edry) |>
+  dplyr::select(trial_nr, cond, item, word_id,
+                fplp_edry, fpfp_cb, diff_cb) |>
+  dplyr::arrange(dplyr::desc(abs(diff_cb)))
+
+cat(sprintf("%d rows where char-boundary FPFP still differs from analyzeeyedry:\n",
+            nrow(disagree_cb)))
+if (nrow(disagree_cb) > 0L) {
+  print(head(disagree_cb, 30))
+}
+```
+
+## 8.7 How much did the character-boundary method improve over monospace?
+
+```{r improvement}
+compare_v6 <- compare_v6 |>
+  dplyr::mutate(
+    abs_diff_mono = abs(fpfp_mono - fplp_edry),
+    abs_diff_cb   = abs(fpfp_cb   - fplp_edry),
+    improved      = dplyr::case_when(
+      is.na(abs_diff_mono) | is.na(abs_diff_cb) ~ NA_character_,
+      abs_diff_cb <  abs_diff_mono               ~ "Improved",
+      abs_diff_cb == abs_diff_mono               ~ "Same",
+      abs_diff_cb >  abs_diff_mono               ~ "Worse"
+    )
+  )
+
+compare_v6 |>
+  dplyr::filter(!is.na(improved)) |>
+  dplyr::count(improved) |>
+  dplyr::mutate(pct = round(100 * n / sum(n), 1)) |>
+  knitr::kable(
+    col.names = c("Change vs monospace", "N", "%"),
+    caption   = paste0("How often did the char-boundary method improve, ",
+                       "maintain, or worsen agreement with analyzeeyedry?")
+  )
+```
+
+---
+
+# 9. NA comparison
+
+```{r na-comparison}
+compare_v6 |>
+  dplyr::mutate(
+    edry_na = is.na(fplp_edry),
+    mono_na = is.na(fpfp_mono),
+    cb_na   = is.na(fpfp_cb)
+  ) |>
+  dplyr::count(edry_na, mono_na, cb_na) |>
+  dplyr::mutate(
+    status = dplyr::case_when(
+      !edry_na & !mono_na & !cb_na ~ "All three non-NA",
+      !edry_na & !mono_na &  cb_na ~ "edry + mono non-NA, cb NA",
+      !edry_na &  mono_na & !cb_na ~ "edry + cb non-NA, mono NA",
+      !edry_na &  mono_na &  cb_na ~ "Only edry non-NA",
+      edry_na  & !mono_na & !cb_na ~ "Only fixated non-NA (both)",
+      edry_na  & !mono_na &  cb_na ~ "Only mono non-NA",
+      edry_na  &  mono_na & !cb_na ~ "Only cb non-NA",
+      TRUE                         ~ "All NA"
+    )
+  ) |>
+  dplyr::select(status, n) |>
+  knitr::kable(caption = "NA pattern across analyzeeyedry fplp, monospace FPFP, and char-boundary FPFP")
+```
+
+---
+
+# 10. Discussion
+
+## Character-boundary method vs monospace
+
+The **character-boundary** method implemented in v6 uses the same
+`REGION CHAR` pixel bounding boxes that analyzeeyedry reads from the ASC file.
+Because both systems consult the same source of truth for character positions,
+the expected agreement rate is substantially higher than the monospace method.
+
+Residual disagreements (if any) most likely arise from:
+
+1. **Word-boundary edge cases**: `fixated` and analyzeeyedry may assign
+   a fixation very near a word boundary to different words if their spatial
+   matching rules differ slightly.  Once a fixation is assigned to a different
+   word, the FPFP for both that word and its neighbour will disagree.
+
+2. **Region spillover**: analyzeeyedry applies a *spillover* correction
+   (gap and size parameters) when building word regions from character data.
+   `fixated` merges character bounding boxes directly.  For most words the
+   regions agree, but for words adjacent to gaps the pixel ranges may differ.
+
+3. **Long fixation handling**: analyzeeyedry discards FPFP when a long
+   fixation (`duration > longtime`) lands on the word during the first pass.
+   `fixated` implements the same rule; any remaining discrepancy in `NA` values
+   would indicate a difference in how straddling fixations or the `t_display_on`
+   filter is applied.
+
+## Conclusion
+
+The character-boundary method is strongly recommended over the monospace
+method when `REGION CHAR` data are available in the ASC file.  The monospace
+method remains a useful fallback when character-level bounding boxes are not
+recorded.
+
+---
+
+```{r session-info}
+sessionInfo()
+```
