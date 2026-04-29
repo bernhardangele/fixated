@@ -69,7 +69,8 @@ if (!requireNamespace("fixated", quietly = TRUE)) {
   install.packages(pkg_root, repos = NULL, type = "source")
 }
 
-library(analyzeeyedry)
+#library(analyzeeyedry)
+devtools::load_all("analyzeeyedry/")
 library(fixated)
 library(dplyr)
 library(ggplot2)

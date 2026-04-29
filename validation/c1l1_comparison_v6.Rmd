@@ -55,9 +55,8 @@ The analysis uses the same parameter set as v4 and v5 (`shorttime = 80`,
 pkg_root          <- file.path(getwd(), "..")
 analyzeeyedry_dir <- file.path(getwd(), "analyzeeyedry")
 
-if (!requireNamespace("analyzeeyedry", quietly = TRUE)) {
-  install.packages(analyzeeyedry_dir, repos = NULL, type = "source")
-}
+install.packages(analyzeeyedry_dir, repos = NULL, type = "source")
+
 # Always reinstall fixated from source: v6 requires character_boundaries in
 # read_eyetrack_asc(), which may not be present in a previously installed build.
 install.packages(pkg_root, repos = NULL, type = "source", quiet = TRUE)
