@@ -44,7 +44,12 @@
 #'       `y_start`, `y_end`, parsed from `TRIAL ... ITEM ... WORD ...`
 #'       messages written by OpenSesame.  `NULL` when no such messages are
 #'       found.}
-#'     \item{`character_boundaries`}{Always `NULL` for EyeLogic files.}
+#'     \item{`character_boundaries`}{A [tibble][tibble::tibble] with columns
+#'       `trial_nr`, `sentence_nr`, `word_id`, `char_id`, `char`, `x_start`,
+#'       `x_end`, `y_start`, `y_end`, parsed from
+#'       `TRIAL ... ITEM ... WORD ... CHARACTER ...  RIGHT_BOUNDARY ...`
+#'       messages written by OpenSesame.  `NULL` when no such messages are
+#'       found.}
 #'     \item{`calibration`}{A [tibble][tibble::tibble] with columns
 #'       parsed from calibration messages.  `NULL` when no such messages are
 #'       found.}
@@ -139,8 +144,9 @@ read_eyelogic <- function(path,
   samples <- .parse_eyelogic_dat(dat_lines, eyes, ref_time_micro)
   
   # ---- 5. Parse MSG lines for metadata ----------------------------------------
-  word_boundaries <- .parse_eyelogic_word_boundaries(msg_lines)
-  calibration     <- .parse_eyelogic_calibration(msg_lines, ref_time_micro)
+  word_boundaries      <- .parse_eyelogic_word_boundaries(msg_lines)
+  character_boundaries <- .parse_eyelogic_character_boundaries(msg_lines)
+  calibration          <- .parse_eyelogic_calibration(msg_lines, ref_time_micro)
   
   # ---- 6. Parse trial structure -----------------------------------------------
   trial_db <- .parse_eyelogic_trial_db(msg_lines, parse_vars, ref_time_micro)
@@ -164,12 +170,18 @@ read_eyelogic <- function(path,
     word_boundaries <- .process_word_boundaries(word_boundaries, trial_db)
   }
   
+  # ---- 7b. Post-process character boundaries ---------------------------------
+  if (!is.null(character_boundaries)) {
+    character_boundaries <- .process_character_boundaries(character_boundaries,
+                                                          word_boundaries)
+  }
+  
   # ---- 8. Return the list ----------------------------------------------------
   list(
     samples              = samples,
     events               = NULL,
     word_boundaries      = word_boundaries,
-    character_boundaries = NULL,
+    character_boundaries = character_boundaries,
     calibration          = calibration,
     trial_db             = trial_db
   )
@@ -326,6 +338,110 @@ read_eyelogic <- function(path,
     word        = m[, 5L],
     x_end       = as.integer(m[, 6L])
   )
+}
+
+#' Parse character boundary messages from EyeLogic file
+#'
+#' Expects lines of the form:
+#'   `MSG;timestamp;TRIAL <trial> ITEM <item> WORD <word_nr> CHARACTER <char_nr> <char> RIGHT_BOUNDARY <x>`
+#'
+#' @param msg_lines A tibble with MSG lines from the EyeLogic file
+#' @return A tibble with columns trial_nr, sentence_nr, word_id, char_id, char,
+#'   x_end, or NULL when no such messages are found
+#' @noRd
+.parse_eyelogic_character_boundaries <- function(msg_lines) {
+  if (nrow(msg_lines) == 0L) return(NULL)
+
+  msg_content <- msg_lines$index
+  pattern <- paste0(
+    "^\\s*TRIAL\\s+(\\d+)\\s+ITEM\\s+(\\d+)\\s+WORD\\s+(\\d+)\\s+",
+    "CHARACTER\\s+(\\d+)\\s+(\\S+)\\s+RIGHT_BOUNDARY\\s+(\\d+)"
+  )
+  cb_idx <- which(stringr::str_detect(msg_content, pattern))
+  if (length(cb_idx) == 0L) return(NULL)
+
+  m <- stringr::str_match(msg_content[cb_idx], pattern)
+  dplyr::tibble(
+    trial_nr    = as.integer(m[, 2L]),
+    sentence_nr = as.integer(m[, 3L]),
+    word_id     = as.integer(m[, 4L]),
+    char_id     = as.integer(m[, 5L]),
+    char        = m[, 6L],
+    x_end       = as.integer(m[, 7L])
+  )
+}
+
+#' Derive x_start, y_start, y_end for character boundaries from word boundaries
+#'
+#' For each character, x_start is the right boundary of the preceding character
+#' (or the word's x_start for the first character).  y_start and y_end are
+#' inherited from the corresponding word boundary row.
+#'
+#' @param char_boundaries Tibble returned by `.parse_eyelogic_character_boundaries()`
+#' @param word_boundaries Processed word boundaries (with x_start, y_start, y_end)
+#' @return Tibble with columns trial_nr, sentence_nr, word_id, char_id, char,
+#'   x_start, x_end, y_start, y_end
+#' @noRd
+.process_character_boundaries <- function(char_boundaries, word_boundaries) {
+  if (is.null(char_boundaries) || nrow(char_boundaries) == 0L) return(NULL)
+
+  has_wb <- !is.null(word_boundaries) && nrow(word_boundaries) > 0L &&
+    all(c("trial_nr", "word_id", "x_start", "y_start", "y_end") %in% names(word_boundaries))
+
+  cb_list <- list()
+  for (tr in unique(char_boundaries$trial_nr)) {
+    trial_cb <- char_boundaries[char_boundaries$trial_nr == tr, , drop = FALSE]
+    trial_wb <- if (has_wb) {
+      word_boundaries[word_boundaries$trial_nr == tr, , drop = FALSE]
+    } else {
+      NULL
+    }
+
+    word_cb_list <- list()
+    for (w_id in sort(unique(trial_cb$word_id))) {
+      word_cb <- trial_cb[trial_cb$word_id == w_id, , drop = FALSE]
+      word_cb <- word_cb[order(word_cb$char_id), , drop = FALSE]
+      n_c <- nrow(word_cb)
+
+      # Derive x_start for each character
+      if (!is.null(trial_wb) && nrow(trial_wb) > 0L) {
+        wb_row <- trial_wb[trial_wb$word_id == w_id, , drop = FALSE]
+        w_x_start <- if (nrow(wb_row) > 0L) as.numeric(wb_row$x_start[[1L]]) else 0
+        w_y_start <- if (nrow(wb_row) > 0L) as.numeric(wb_row$y_start[[1L]]) else 0
+        w_y_end   <- if (nrow(wb_row) > 0L) as.numeric(wb_row$y_end[[1L]])   else 1080
+      } else {
+        # Fallback: estimate x_start as the first char's x_end minus an assumed width
+        first_width <- if (n_c > 1L) {
+          as.numeric(word_cb$x_end[[2L]]) - as.numeric(word_cb$x_end[[1L]])
+        } else {
+          14L
+        }
+        w_x_start <- as.numeric(word_cb$x_end[[1L]]) - first_width
+        w_y_start <- 0
+        w_y_end   <- 1080
+      }
+
+      x_starts <- numeric(n_c)
+      x_starts[1L] <- w_x_start
+      if (n_c > 1L) {
+        x_starts[seq(2L, n_c)] <- as.numeric(word_cb$x_end[seq_len(n_c - 1L)])
+      }
+
+      word_cb$x_start <- x_starts
+      word_cb$y_start <- w_y_start
+      word_cb$y_end   <- w_y_end
+      word_cb_list[[as.character(w_id)]] <- word_cb
+    }
+    cb_list[[as.character(tr)]] <- dplyr::bind_rows(word_cb_list)
+  }
+
+  char_boundaries <- dplyr::bind_rows(cb_list)
+
+  desired_cols <- c("trial_nr", "sentence_nr", "word_id", "char_id", "char",
+                    "x_start", "x_end", "y_start", "y_end")
+  existing_cols <- names(char_boundaries)
+  col_order <- c(intersect(desired_cols, existing_cols), setdiff(existing_cols, desired_cols))
+  char_boundaries[, col_order]
 }
 
 #' Parse calibration messages from EyeLogic file

@@ -673,21 +673,24 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
       if (input$show_char_regions && !is.null(cb) && nrow(cb) > 0L) {
         has_full_cb <- all(c("x_start", "x_end", "y_start", "y_end") %in% names(cb))
         has_cb_x_end <- "x_end" %in% names(cb)
-        
+
         if (has_full_cb) {
           for (i in seq_len(nrow(cb))) {
-            cb_text <- if ("char" %in% names(cb)) paste0("Char: ", cb$char[[i]]) else paste0("Char: ", cb$char_id[[i]])
+            cb_char <- if ("char" %in% names(cb)) {
+              paste0("Char: ", cb$char[[i]], " (x_end: ", cb$x_end[[i]], ")")
+            } else {
+              paste0("Char #", cb$char_id[[i]], " (x_end: ", cb$x_end[[i]], ")")
+            }
             shapes <- append(shapes, list(list(
-              type = "rect",
-              x0 = cb$x_start[[i]], x1 = cb$x_end[[i]],
+              type = "line",
+              x0 = cb$x_end[[i]], x1 = cb$x_end[[i]],
               y0 = cb$y_start[[i]], y1 = cb$y_end[[i]],
-              fillcolor = "rgba(255, 165, 0, 0.05)",
-              line = list(color = "orange", width = 0.2),
-              layer = "below"
+              line = list(color = "rgba(0, 0, 200, 0.6)", width = 0.5),
+              layer = "above"
             )))
-            hover_x <- c(hover_x, (cb$x_start[[i]] + cb$x_end[[i]]) / 2)
+            hover_x <- c(hover_x, cb$x_end[[i]])
             hover_y <- c(hover_y, (cb$y_start[[i]] + cb$y_end[[i]]) / 2)
-            hover_txt <- c(hover_txt, cb_text)
+            hover_txt <- c(hover_txt, cb_char)
           }
         } else if (has_cb_x_end) {
           for (i in seq_len(nrow(cb))) {
@@ -695,8 +698,8 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
               type = "line",
               x0 = cb$x_end[[i]], x1 = cb$x_end[[i]],
               y0 = 0, y1 = 1, yref = "paper",
-              line = list(color = "orange", width = 0.5, dash = "dot"),
-              layer = "below"
+              line = list(color = "rgba(0, 0, 200, 0.6)", width = 0.5),
+              layer = "above"
             )))
           }
         }
