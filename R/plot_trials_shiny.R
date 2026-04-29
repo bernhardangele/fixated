@@ -19,6 +19,13 @@
 #' @param roi A data frame of word regions of interest as returned by
 #'   \code{\link{read_roi}}. Alias for `rois`.
 #' @param trial_db A data frame containing trial metadata (e.g. `t_display_on`).
+#' @param character_boundaries A data frame of per-character bounding boxes as
+#'   returned by \code{\link{read_eyetrack_asc}} or \code{\link{read_asc}}.
+#'   Must contain `word_id`, `char_id`, `x_start`, `x_end`.  When provided (or
+#'   available via `asc_result$character_boundaries`), the app shows a
+#'   "Show character positions" checkbox that draws individual character
+#'   boundaries and highlights the estimated character fixation position for
+#'   each detected fixation.  Defaults to `NULL`.
 #' @param launch.browser Logical.  Passed to
 #'   \code{\link[shiny]{shinyApp}}'s `options` list as the `launch.browser`
 #'   element.  Defaults to `TRUE`.
@@ -42,7 +49,8 @@
 #'     to the period between `t_display_on` and `t_display_off` as recorded
 #'     in `asc_result$trial_db`.}
 #'   \item{Overlay toggles}{Independent checkboxes to show/hide raw gaze
-#'     samples, detected fixations, and word-boundary lines with labels.}
+#'     samples, detected fixations, word-boundary lines with labels, and
+#'     (when character data is available) individual character positions.}
 #'   \item{Animate slider}{Replay the trial up to any relative time (ms
 #'     from display onset).}
 #'   \item{Background image}{Upload a PNG or JPEG screenshot of the stimulus
@@ -68,10 +76,25 @@
 #'   result <- read_asc(asc_file)
 #'   plot_trials_shiny(result)
 #' }
+#'
+#' # With character-level boundary data from EyeTrack ASC
+#' et_file <- system.file("extdata", "eyetrack_example.asc", package = "fixated")
+#' if (file.exists(et_file)) {
+#'   result <- read_eyetrack_asc(et_file)
+#'   # Pass data frames individually since read_eyetrack_asc does not produce
+#'   # samples/events (use the fixations element directly)
+#'   plot_trials_shiny(
+#'     fixations            = result$fixations,
+#'     rois                 = result$word_boundaries,
+#'     character_boundaries = result$character_boundaries,
+#'     trial_db             = result$trial_db
+#'   )
+#' }
 #' }
 plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
                                fixations = NULL, rois = NULL, measures = NULL,
                                roi = NULL, trial_db = NULL,
+                               character_boundaries = NULL,
                                launch.browser = TRUE) {
 
   # ---- dependency checks ----------------------------------------------------
@@ -107,6 +130,7 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
     }
     if (is.null(rois)) rois <- asc_result$word_boundaries
     if (is.null(trial_db)) trial_db <- asc_result$trial_db
+    if (is.null(character_boundaries)) character_boundaries <- asc_result$character_boundaries
   }
 
   # ---- mismatch trials check ------------------------------------------------
@@ -137,6 +161,12 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
   if (n_trials == 0L) {
     stop("No trials found in the provided data.")
   }
+
+  # Flag: character boundary data is available
+  has_char_bounds <- !is.null(character_boundaries) &&
+    is.data.frame(character_boundaries) &&
+    nrow(character_boundaries) > 0L &&
+    all(c("word_id", "char_id", "x_start", "x_end") %in% names(character_boundaries))
 
   # ---- build UI ---------------------------------------------------------------
   ui <- shiny::fluidPage(
@@ -184,6 +214,12 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
                              "Show word text labels", value = TRUE),
         shiny::checkboxInput("show_measures",
                              "Show FFD / GD / TVT bars", value = FALSE),
+        if (has_char_bounds) {
+          shiny::checkboxInput("show_char_positions",
+                               "Show character positions", value = FALSE)
+        } else {
+          NULL
+        },
         shiny::hr(),
         shiny::checkboxInput("show_fixation_table",
                              "Show fixation table", value = FALSE),
@@ -441,6 +477,50 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
       wb
     })
 
+    # Resolve character boundary data for the current trial (when available)
+    trial_cb <- shiny::reactive({
+      if (!has_char_bounds) return(NULL)
+      tnr <- current_tnr()
+      cb_in <- character_boundaries
+      if (has_subject_selector && "subject" %in% names(cb_in)) {
+        cb_in <- dplyr::filter(cb_in, .data$subject == current_subject())
+      }
+      cb <- if ("trial_nr" %in% names(cb_in)) {
+        dplyr::filter(cb_in, .data$trial_nr == tnr)
+      } else if ("trial" %in% names(cb_in)) {
+        dplyr::filter(cb_in, .data$trial == tnr)
+      } else {
+        cb_in
+      }
+      if (nrow(cb) == 0L) return(NULL)
+      cb
+    })
+
+    # Compute fixation-level character position estimates when char bounds available
+    fixation_char_positions <- shiny::reactive({
+      if (!has_char_bounds) return(NULL)
+      fix <- trial_fixations()
+      if (is.null(fix) || nrow(fix) == 0L) return(NULL)
+      wb  <- trial_wb()
+      if (is.null(wb) || nrow(wb) == 0L) return(NULL)
+      if (!all(c("x_start", "x_end") %in% names(wb))) return(NULL)
+      cb  <- trial_cb()
+      if (is.null(cb)) return(NULL)
+
+      fix_m <- fix
+      wb_m  <- wb
+      cb_m  <- cb
+      tnr   <- current_tnr()
+      if (!"trial_nr" %in% names(fix_m)) fix_m$trial_nr <- tnr
+      if (!"trial_nr" %in% names(wb_m))  wb_m$trial_nr  <- tnr
+      if (!"trial_nr" %in% names(cb_m))  cb_m$trial_nr  <- tnr
+
+      tryCatch(
+        get_landing_info(fix_m, wb_m, character_boundaries = cb_m),
+        error = function(e) NULL
+      )
+    })
+
     # Word measures (FFD, GD, TVT) – computed only when needed
     word_measures <- shiny::reactive({
       shiny::req(input$show_measures || input$show_word_table)
@@ -635,6 +715,73 @@ plot_trials_shiny <- function(asc_result = NULL, samples = NULL,
           data = label_df, ggplot2::aes(x = .data$x, y = .data$y, label = .data$label),
           vjust = 0.5, size = 3.5, color = "grey20"
         )
+      }
+
+      # Character position boundaries
+      show_chars <- has_char_bounds && isTRUE(input$show_char_positions)
+      if (show_chars) {
+        cb <- trial_cb()
+        if (!is.null(cb) && nrow(cb) > 0L) {
+          has_cb_full <- all(c("x_start", "x_end", "y_start", "y_end") %in% names(cb))
+          if (has_cb_full) {
+            cb_tip <- paste0(
+              "Char: ", cb$char,
+              " (word ", cb$word_id, ", pos ", cb$char_id, ")"
+            )
+            cb_plot <- dplyr::mutate(cb, .cb_tip = cb_tip)
+            p <- p + ggplot2::geom_rect(
+              data = cb_plot,
+              ggplot2::aes(
+                xmin = .data$x_start, xmax = .data$x_end,
+                ymin = .data$y_start, ymax = .data$y_end,
+                text = .data$.cb_tip
+              ),
+              fill = "orange", alpha = 0.12, color = "darkorange", linewidth = 0.2
+            )
+          } else if ("x_end" %in% names(cb)) {
+            p <- p + ggplot2::geom_vline(
+              data = cb, ggplot2::aes(xintercept = .data$x_end),
+              color = "darkorange", alpha = 0.5, linewidth = 0.2
+            )
+          }
+
+          # Overlay estimated fixation character position (highlighted char box)
+          fcp <- fixation_char_positions()
+          if (!is.null(fcp) && nrow(fcp) > 0L &&
+              all(c("word_id", "fixated_char") %in% names(fcp))) {
+            fc_rows <- fcp[!is.na(fcp$word_id) & !is.na(fcp$fixated_char), , drop = FALSE]
+            if (nrow(fc_rows) > 0L && "fixation_nr" %in% names(fc_rows)) {
+              # For each fixation, join to the matching character box
+              fc_left <- fc_rows[, intersect(c("fixation_nr", "word_id",
+                                                "fixated_char"), names(fc_rows)),
+                                 drop = FALSE]
+              fc_merged <- merge(
+                fc_left,
+                cb[, intersect(c("word_id", "char_id", "x_start", "x_end",
+                                  "y_start", "y_end"), names(cb)), drop = FALSE],
+                by.x = c("word_id", "fixated_char"),
+                by.y = c("word_id", "char_id"),
+                all.x = FALSE
+              )
+              if (nrow(fc_merged) > 0L && has_cb_full) {
+                fc_tip <- paste0(
+                  "Fix #", fc_merged$fixation_nr,
+                  " estimated char pos: ", fc_merged$fixated_char
+                )
+                fc_merged$.fc_tip <- fc_tip
+                p <- p + ggplot2::geom_rect(
+                  data = fc_merged,
+                  ggplot2::aes(
+                    xmin = .data$x_start, xmax = .data$x_end,
+                    ymin = .data$y_start, ymax = .data$y_end,
+                    text = .data$.fc_tip
+                  ),
+                  fill = "orange", alpha = 0.5, color = "darkorange", linewidth = 0.5
+                )
+              }
+            }
+          }
+        }
       }
 
       # FFD / GD / TVT bar overlays

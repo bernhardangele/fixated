@@ -29,7 +29,7 @@
 #'   [grepl()]) are included.  Defaults to `"^[A-Za-z]"` (any ID starting
 #'   with a letter, which is the typical EyeTrack convention).
 #'
-#' @return A named list with three elements:
+#' @return A named list with four elements:
 #'   \describe{
 #'     \item{`fixations`}{A [tibble][tibble::tibble] with one row per fixation
 #'       and columns `trial_nr` (sequential integer), `start_time`,
@@ -40,6 +40,13 @@
 #'       trial × word and columns `trial_nr`, `word_id`, `word`, `x_start`,
 #'       `x_end`, `y_start`, `y_end`.  This tibble can be passed directly to
 #'       [compute_eye_measures()] as the `roi` argument.}
+#'     \item{`character_boundaries`}{A [tibble][tibble::tibble] with one row
+#'       per trial × word × character and columns `trial_nr`, `word_id`,
+#'       `char_id` (1-based within word, excluding trailing space), `char`,
+#'       `x_start`, `x_end`, `y_start`, `y_end` (pixel coordinates).
+#'       This tibble can be passed to [get_landing_info()] as the
+#'       `character_boundaries` argument to compute `fixated_char` from
+#'       actual character positions rather than a monospace assumption.}
 #'     \item{`trial_db`}{A [tibble][tibble::tibble] with one row per trial and
 #'       columns `trial_nr`, `trial_id`, `prefix`, `cond`, `item`, `seq`,
 #'       `t_trial_start`, `t_display_on`, `t_display_off`, `t_trial_end`.
@@ -72,6 +79,7 @@ read_eyetrack_asc <- function(path, trial_pattern = "^[A-Za-z]") {
 
   fix_rows   <- list()
   roi_rows   <- list()
+  char_rows  <- list()
   trial_rows <- list()
 
   in_trial    <- FALSE
@@ -198,10 +206,16 @@ read_eyetrack_asc <- function(path, trial_pattern = "^[A-Za-z]") {
                                           stringsAsFactors = FALSE))
         chars_df <- chars_df[order(chars_df$idx), , drop = FALSE]
         word_rois <- .build_word_rois_from_chars(chars_df)
+        char_rois <- .build_char_rois_from_chars(chars_df)
 
         if (nrow(word_rois) > 0L) {
           word_rois$trial_nr <- seq_n
           roi_rows[[length(roi_rows) + 1L]] <- word_rois
+        }
+
+        if (nrow(char_rois) > 0L) {
+          char_rois$trial_nr <- seq_n
+          char_rows[[length(char_rows) + 1L]] <- char_rois
         }
 
         # Collect fixation rows for this trial
@@ -268,6 +282,24 @@ read_eyetrack_asc <- function(path, trial_pattern = "^[A-Za-z]") {
     )
   }
 
+  character_boundaries_tbl <- if (length(char_rows) > 0L) {
+    dplyr::bind_rows(lapply(char_rows, function(r) {
+      dplyr::as_tibble(r[, c("trial_nr", "word_id", "char_id", "char",
+                               "x_start", "x_end", "y_start", "y_end")])
+    }))
+  } else {
+    dplyr::tibble(
+      trial_nr = integer(0),
+      word_id  = integer(0),
+      char_id  = integer(0),
+      char     = character(0),
+      x_start  = double(0),
+      x_end    = double(0),
+      y_start  = double(0),
+      y_end    = double(0)
+    )
+  }
+
   trial_db_tbl <- if (length(trial_rows) > 0L) {
     dplyr::bind_rows(lapply(trial_rows, dplyr::as_tibble))
   } else {
@@ -286,9 +318,10 @@ read_eyetrack_asc <- function(path, trial_pattern = "^[A-Za-z]") {
   }
 
   list(
-    fixations       = fixations_tbl,
-    word_boundaries = word_boundaries_tbl,
-    trial_db        = trial_db_tbl
+    fixations            = fixations_tbl,
+    word_boundaries      = word_boundaries_tbl,
+    character_boundaries = character_boundaries_tbl,
+    trial_db             = trial_db_tbl
   )
 }
 
@@ -346,4 +379,62 @@ read_eyetrack_asc <- function(path, trial_pattern = "^[A-Za-z]") {
     )
   }
   do.call(rbind, rois)
+}
+
+#' Build character-level ROIs from a character-level data frame
+#'
+#' Each non-space character is given its exact bounding box along with a
+#' word_id and a 1-based char_id (counting only non-space characters within
+#' the word).  Spaces are omitted from the output because they do not
+#' correspond to a readable character position.
+#'
+#' @param chars_df Data frame with columns: idx, char, x_left, y_top,
+#'   x_right, y_bottom.  Must be sorted by idx.
+#' @return Data frame with columns: word_id (integer), char_id (integer,
+#'   1-based within word), char (character), x_start, x_end, y_start, y_end.
+#' @noRd
+.build_char_rois_from_chars <- function(chars_df) {
+  n <- nrow(chars_df)
+  if (n == 0L) return(data.frame())
+
+  # Identify the row-index of the first character of each word (same logic as
+  # .build_word_rois_from_chars)
+  word_start_rows <- integer(0)
+  for (ci in seq_len(n)) {
+    if (ci == 1L) {
+      word_start_rows <- c(word_start_rows, ci)
+    } else if (chars_df$char[[ci - 1L]] == " " &&
+               chars_df$char[[ci]]     != " ") {
+      word_start_rows <- c(word_start_rows, ci)
+    }
+  }
+
+  nw <- length(word_start_rows)
+  if (nw == 0L) return(data.frame())
+
+  word_end_rows <- c(word_start_rows[-1L] - 1L, n)
+
+  char_list <- list()
+  for (w in seq_len(nw)) {
+    rows           <- word_start_rows[[w]]:word_end_rows[[w]]
+    char_id_in_word <- 0L
+    for (ri in rows) {
+      ch <- chars_df$char[[ri]]
+      if (ch == " ") next  # skip spaces (word separators)
+      char_id_in_word <- char_id_in_word + 1L
+      char_list[[length(char_list) + 1L]] <- data.frame(
+        word_id = as.integer(w),
+        char_id = char_id_in_word,
+        char    = ch,
+        x_start = chars_df$x_left[[ri]],
+        x_end   = chars_df$x_right[[ri]],
+        y_start = chars_df$y_top[[ri]],
+        y_end   = chars_df$y_bottom[[ri]],
+        stringsAsFactors = FALSE
+      )
+    }
+  }
+
+  if (length(char_list) == 0L) return(data.frame())
+  do.call(rbind, char_list)
 }

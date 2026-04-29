@@ -4,11 +4,12 @@ test_that("read_eyetrack_asc: file not found gives error", {
   expect_error(read_eyetrack_asc("/nonexistent/file.asc"))
 })
 
-test_that("read_eyetrack_asc: returns a list with three elements", {
+test_that("read_eyetrack_asc: returns a list with four elements", {
   skip_if(!file.exists(asc_file), "sample EyeTrack ASC file not found")
   result <- read_eyetrack_asc(asc_file)
   expect_type(result, "list")
-  expect_named(result, c("fixations", "word_boundaries", "trial_db"),
+  expect_named(result, c("fixations", "word_boundaries", "character_boundaries",
+                         "trial_db"),
                ignore.order = FALSE)
 })
 
@@ -111,4 +112,59 @@ test_that("read_eyetrack_asc: output is compatible with compute_eye_measures", {
   expect_s3_class(measures, "tbl_df")
   expect_true("ffd" %in% names(measures))
   expect_true("gd" %in% names(measures))
+})
+
+test_that("read_eyetrack_asc: character_boundaries has required columns", {
+  skip_if(!file.exists(asc_file), "sample EyeTrack ASC file not found")
+  result <- read_eyetrack_asc(asc_file)
+  cb <- result$character_boundaries
+  expect_true(all(c("trial_nr", "word_id", "char_id", "char",
+                     "x_start", "x_end", "y_start", "y_end") %in% names(cb)))
+})
+
+test_that("read_eyetrack_asc: character_boundaries has correct character data", {
+  skip_if(!file.exists(asc_file), "sample EyeTrack ASC file not found")
+  result <- read_eyetrack_asc(asc_file)
+  cb <- result$character_boundaries
+  # Trial 1: "The cat" – "The" has 3 chars, "cat" has 3 chars → 6 chars total
+  cb1 <- cb[cb$trial_nr == 1L, , drop = FALSE]
+  expect_equal(nrow(cb1), 6L)
+  # char_id is 1-based within each word
+  expect_true(all(cb1$char_id >= 1L))
+  # First word characters: T, h, e
+  w1_chars <- cb1[cb1$word_id == 1L, , drop = FALSE]
+  w1_chars <- w1_chars[order(w1_chars$char_id), ]
+  expect_equal(w1_chars$char, c("T", "h", "e"))
+  expect_equal(w1_chars$char_id, c(1L, 2L, 3L))
+})
+
+test_that("read_eyetrack_asc: character_boundaries x positions are within word boundaries", {
+  skip_if(!file.exists(asc_file), "sample EyeTrack ASC file not found")
+  result <- read_eyetrack_asc(asc_file)
+  cb <- result$character_boundaries
+  wb <- result$word_boundaries
+  cb1 <- cb[cb$trial_nr == 1L, , drop = FALSE]
+  wb1 <- wb[wb$trial_nr == 1L, , drop = FALSE]
+  # Each character's x_start should be >= its word's x_start
+  for (wi in unique(cb1$word_id)) {
+    chars_w <- cb1[cb1$word_id == wi, , drop = FALSE]
+    word_w  <- wb1[wb1$word_id == wi, , drop = FALSE]
+    if (nrow(word_w) == 0L) next
+    expect_true(all(chars_w$x_start >= word_w$x_start[[1L]] - 1e-6))
+    expect_true(all(chars_w$x_end   <= word_w$x_end[[1L]]   + 1e-6))
+  }
+})
+
+test_that("read_eyetrack_asc: character_boundaries compatible with get_landing_info", {
+  skip_if(!file.exists(asc_file), "sample EyeTrack ASC file not found")
+  result <- read_eyetrack_asc(asc_file)
+  landing <- get_landing_info(
+    result$fixations,
+    result$word_boundaries,
+    character_boundaries = result$character_boundaries
+  )
+  expect_true("fixated_char" %in% names(landing))
+  # Data-driven fixated_char should be non-NA for matched fixations
+  matched <- landing[!is.na(landing$word_id), , drop = FALSE]
+  expect_true(all(!is.na(matched$fixated_char)))
 })
