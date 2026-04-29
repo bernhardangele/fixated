@@ -583,7 +583,7 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         } else {
           wm_in
         }
-        if ("ffd_x" %in% names(wm) && "ffd_char" %in% names(wm) && nrow(wm) > 0L) {
+        if (all(c("ffd_x", "ffd_char") %in% names(wm)) && nrow(wm) > 0L) {
           keep   <- intersect(c("word_id", "ffd_x", "ffd_y", "ffd_char"), names(wm))
           result <- wm[!is.na(wm$ffd_x), keep, drop = FALSE]
           if (nrow(result) > 0L) {
@@ -827,11 +827,10 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         has_cb_x_end <- "x_end" %in% names(cb)
         if (has_full_cb) {
           for (i in seq_len(nrow(cb))) {
-            cb_text <- if ("char" %in% names(cb)) {
-              paste0("Char: ", cb$char[[i]], " (word ", cb$word_id[[i]], ")")
-            } else {
-              paste0("Char: ", cb$char_id[[i]], " (word ", cb$word_id[[i]], ")")
-            }
+            cb_text <- paste0(
+              if ("char" %in% names(cb)) cb$char[[i]] else cb$char_id[[i]],
+              " (word ", cb$word_id[[i]], ")"
+            )
             char_shapes <- append(char_shapes, list(list(
               type = "rect",
               x0 = cb$x_start[[i]], x1 = cb$x_end[[i]],
@@ -910,12 +909,14 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
         # (smaller y in screen coordinates = visually higher) to prevent
         # overlap with the character letter labels.
         if (show_both_regions && has_full_roi) {
+          # Shift by ~65% of the average character height to clear the char labels
+          label_shift_factor <- 0.65
           char_height_est <- if (nrow(cb) > 0L) {
             mean(abs(cb$y_end - cb$y_start), na.rm = TRUE)
           } else {
             20
           }
-          label_y <- label_y - char_height_est * 0.65
+          label_y <- label_y - char_height_est * label_shift_factor
         }
         p <- plotly::add_text(
           p, x = label_x, y = label_y, text = wb$word,
@@ -1166,10 +1167,10 @@ plot_trials_shiny_fast <- function(asc_result = NULL, samples = NULL,
 
             if (!is.na(char_id) && "char_id" %in% names(cb_word)) {
               cb_char <- cb_word[cb_word$char_id == char_id, , drop = FALSE]
-              if (nrow(cb_char) == 0L) cb_char <- cb_word[1L, , drop = FALSE]
             } else {
-              cb_char <- cb_word[1L, , drop = FALSE]
+              cb_char <- data.frame()
             }
+            if (nrow(cb_char) == 0L) cb_char <- cb_word[1L, , drop = FALSE]
 
             cx <- (cb_char$x_start[1L] + cb_char$x_end[1L]) / 2
             cy <- cb_char$y_start[1L]   # top of character region (visually above char)
