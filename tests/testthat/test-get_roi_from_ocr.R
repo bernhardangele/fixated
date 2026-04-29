@@ -24,7 +24,6 @@ test_that("get_roi_from_ocr errors on non-existent file", {
 
 test_that("get_roi_from_ocr returns word-level tibble with correct columns", {
   skip_if_not_installed("tesseract")
-  skip_if_not_installed("grDevices")
 
   tmp <- tempfile(fileext = ".png")
   on.exit(unlink(tmp))
@@ -53,7 +52,6 @@ test_that("get_roi_from_ocr returns word-level tibble with correct columns", {
 
 test_that("get_roi_from_ocr returns character-level tibble with correct columns", {
   skip_if_not_installed("tesseract")
-  skip_if_not_installed("grDevices")
 
   tmp <- tempfile(fileext = ".png")
   on.exit(unlink(tmp))
@@ -84,7 +82,6 @@ test_that("get_roi_from_ocr returns character-level tibble with correct columns"
 
 test_that("get_roi_from_ocr empty result has correct schema (word)", {
   skip_if_not_installed("tesseract")
-  skip_if_not_installed("grDevices")
 
   # A blank white image should yield no detections
   tmp <- tempfile(fileext = ".png")
@@ -103,7 +100,6 @@ test_that("get_roi_from_ocr empty result has correct schema (word)", {
 
 test_that("get_roi_from_ocr empty result has correct schema (character)", {
   skip_if_not_installed("tesseract")
-  skip_if_not_installed("grDevices")
 
   tmp <- tempfile(fileext = ".png")
   on.exit(unlink(tmp))
@@ -122,7 +118,6 @@ test_that("get_roi_from_ocr empty result has correct schema (character)", {
 
 test_that("get_roi_from_ocr accepts a pre-built engine", {
   skip_if_not_installed("tesseract")
-  skip_if_not_installed("grDevices")
 
   tmp <- tempfile(fileext = ".png")
   on.exit(unlink(tmp))
@@ -139,7 +134,6 @@ test_that("get_roi_from_ocr accepts a pre-built engine", {
 
 test_that("get_roi_from_ocr trial_nr is coerced to integer", {
   skip_if_not_installed("tesseract")
-  skip_if_not_installed("grDevices")
 
   tmp <- tempfile(fileext = ".png")
   on.exit(unlink(tmp))
