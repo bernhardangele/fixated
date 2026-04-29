@@ -20,10 +20,13 @@
 #'   `(avg_x - x_start) / (x_end - x_start)`.  Clamped to `[0, 1]` for
 #'   slight numeric drift.  `NA` when the word width is <= 0 or `word_id` is
 #'   `NA`.
-#' * `fixated_char` – assuming a monospace font, the 1-based character
-#'   position that `word_proportion` maps to.  For a word of `N` characters:
-#'   `pmin(N, pmax(1, floor(word_proportion * N) + 1))`.  `NA` when
-#'   `word_proportion` or `N` is `NA` / 0.
+#' * `fixated_char` – the 1-based character position within the word.  When
+#'   `character_boundaries` is provided, this is determined by finding which
+#'   character's bounding box contains `avg_x`; when a fixation falls between
+#'   character boxes the monospace estimate is used as a fallback.  When
+#'   `character_boundaries` is `NULL` (default), a monospace font is assumed:
+#'   `pmin(N, pmax(1, floor(word_proportion * N) + 1))` for a word of `N`
+#'   characters.  `NA` when `word_proportion` or `N` is `NA` / 0.
 #'
 #' @section Join keys:
 #' The function determines how to match fixations to word boundaries:
@@ -37,6 +40,7 @@
 #'     so the boundaries must correspond to the same trial/sentence as the
 #'     fixations.
 #' }
+#' The same join-key logic applies to `character_boundaries` (when provided).
 #'
 #' @param fixations A [tibble][tibble::tibble] (or data frame) of fixations.
 #'   Must contain at least `avg_x` (average fixation x position, numeric).
@@ -46,6 +50,14 @@
 #'   boundaries.  Must contain `word_id`, `x_start`, and `x_end`.  May also
 #'   contain a word-text column named `word` or `word_text` (used for
 #'   `fixated_char`), and `trial_nr` / `sentence_nr` join keys.
+#' @param character_boundaries A [tibble][tibble::tibble] (or data frame) of
+#'   per-character bounding boxes, as returned by [read_eyetrack_asc()] or
+#'   [read_asc()].  Must contain `word_id`, `char_id` (1-based within word),
+#'   `x_start`, and `x_end`.  May also contain `trial_nr` / `sentence_nr`
+#'   join keys.  When provided, `fixated_char` is computed from the actual
+#'   character pixel positions rather than a monospace assumption; fixations
+#'   that do not fall within any character box fall back to the monospace
+#'   estimate.  Defaults to `NULL` (monospace calculation).
 #'
 #' @return The input `fixations` tibble with four additional columns:
 #'   `word_id` (integer), `fixation_type` (character), `word_proportion`
@@ -69,9 +81,34 @@
 #' )
 #' result <- get_landing_info(fixations, word_boundaries)
 #' result[, c("word_id", "fixation_type", "word_proportion", "fixated_char")]
-get_landing_info <- function(fixations, word_boundaries) {
+#'
+#' # Using actual character boundaries instead of monospace assumption
+#' char_bounds <- dplyr::tibble(
+#'   trial_nr = c(1L, 1L, 1L, 1L, 1L),
+#'   word_id  = c(1L, 1L, 1L, 1L, 1L),
+#'   char_id  = c(1L, 2L, 3L, 4L, 5L),
+#'   char     = c("H", "e", "l", "l", "o"),
+#'   x_start  = c(100, 120, 145, 165, 190),
+#'   x_end    = c(120, 145, 165, 190, 210)
+#' )
+#' result2 <- get_landing_info(
+#'   fixations[1, ], word_boundaries[1, ],
+#'   character_boundaries = char_bounds
+#' )
+#' result2$fixated_char  # uses actual character positions
+get_landing_info <- function(fixations, word_boundaries,
+                              character_boundaries = NULL) {
   stopifnot(is.data.frame(fixations))
   stopifnot(is.data.frame(word_boundaries))
+  if (!is.null(character_boundaries)) {
+    stopifnot(is.data.frame(character_boundaries))
+    required_cb <- c("word_id", "char_id", "x_start", "x_end")
+    missing_cb  <- setdiff(required_cb, names(character_boundaries))
+    if (length(missing_cb) > 0L) {
+      stop("'character_boundaries' is missing required columns: ",
+           paste(missing_cb, collapse = ", "))
+    }
+  }
 
   # ---- Validate required columns -------------------------------------------
   if (!"avg_x" %in% names(fixations)) {
@@ -182,11 +219,59 @@ get_landing_info <- function(fixations, word_boundaries) {
   word_proportion[is.na(word_id_matched)] <- NA_real_
 
   # ---- 3. Compute fixated_char ----------------------------------------------
+  # Default: monospace assumption
   N            <- nchar(word_text_matched)
   N[!is.na(N) & N == 0L] <- NA_integer_
   fixated_char <- as.integer(floor(word_proportion * N) + 1L)
   fixated_char <- pmin(N, pmax(1L, fixated_char))
   fixated_char[is.na(N) | is.na(word_proportion)] <- NA_integer_
+
+  # Override with data-driven character positions when character_boundaries
+  # is provided.  For each fixation matched to a word, find the character
+  # whose bounding box contains avg_x.  Fixations not matched to any
+  # character box retain the monospace estimate above.
+  if (!is.null(character_boundaries)) {
+    cb_names <- names(character_boundaries)
+
+    # Determine join key for character_boundaries (same logic as word_boundaries)
+    cb_join_key <- if ("trial_nr"   %in% fix_names && "trial_nr"   %in% cb_names) "trial_nr"   else
+                   if ("sentence_nr" %in% fix_names && "sentence_nr" %in% cb_names) "sentence_nr" else
+                   character(0L)
+
+    # Build working subset of character_boundaries
+    cb_keep <- unique(c(cb_join_key, "word_id", "char_id", "x_start", "x_end"))
+    cb_sub  <- character_boundaries[, cb_keep[cb_keep %in% cb_names], drop = FALSE]
+
+    # For each fixation that landed on a word, match avg_x to a character box
+    for (fi in seq_len(n_fix)) {
+      wid <- word_id_matched[[fi]]
+      if (is.na(wid)) next
+      fx <- fixations$avg_x[[fi]]
+      if (is.na(fx)) next
+
+      # Subset character_boundaries to the right trial/sentence and word
+      cb_trial <- cb_sub
+      if (length(cb_join_key) > 0L) {
+        key_val <- fixations[[cb_join_key]][[fi]]
+        cb_trial <- cb_trial[cb_trial[[cb_join_key]] == key_val, , drop = FALSE]
+      }
+      cb_word <- cb_trial[cb_trial$word_id == wid, , drop = FALSE]
+      if (nrow(cb_word) == 0L) next
+
+      # Find character whose box contains fx
+      .eps2 <- 1e-9
+      in_char <- which(
+        !is.na(cb_word$x_start) &
+        !is.na(cb_word$x_end) &
+        fx >= cb_word$x_start - .eps2 &
+        fx <= cb_word$x_end   + .eps2
+      )
+      if (length(in_char) >= 1L) {
+        # If multiple characters match (shouldn't normally happen), pick first
+        fixated_char[[fi]] <- as.integer(cb_word$char_id[[in_char[[1L]]]])
+      }
+    }
+  }
 
   # ---- 4. Attach columns to fixations output --------------------------------
   result              <- fixations

@@ -305,3 +305,99 @@ test_that("get_landing_info errors when word_boundaries missing required column"
   wb  <- dplyr::tibble(trial_nr = 1L, word_id = 1L, x_start = 100)  # no x_end
   expect_error(get_landing_info(fix, wb), "x_end")
 })
+
+# ---- character_boundaries option -------------------------------------------
+
+make_char_boundaries <- function() {
+  # "Hello" spans x 100-300 with unequal character widths
+  # H: 100-130, e: 130-160, l: 160-200, l: 200-240, o: 240-300
+  dplyr::tibble(
+    trial_nr = rep(1L, 5L),
+    word_id  = rep(1L, 5L),
+    char_id  = 1:5,
+    char     = c("H", "e", "l", "l", "o"),
+    x_start  = c(100, 130, 160, 200, 240),
+    x_end    = c(130, 160, 200, 240, 300)
+  )
+}
+
+test_that("get_landing_info uses character_boundaries when provided", {
+  # Midpoint of 'l' at index 3 is about 180 (x_start=160, x_end=200)
+  fix <- dplyr::tibble(trial_nr = 1L, start_time = 100L, avg_x = 180)
+  wb  <- dplyr::tibble(trial_nr = 1L, word_id = 1L, word = "Hello",
+                        x_start = 100, x_end = 300)
+  cb  <- make_char_boundaries()
+  result <- get_landing_info(fix, wb, character_boundaries = cb)
+  # With character boundaries, avg_x=180 falls in char 3 (x_start=160, x_end=200)
+  expect_equal(result$fixated_char, 3L)
+  # Monospace would give floor(0.40 * 5) + 1 = 3 too, so use a position where they differ
+})
+
+test_that("get_landing_info character_boundaries overrides monospace", {
+  # avg_x = 250 → in char 'o' (char_id=5, x_start=240, x_end=300)
+  # Monospace: word_proportion = (250-100)/200 = 0.75, floor(0.75*5)+1 = 4
+  # Data-driven: char 5 (x_start=240 <= 250 <= x_end=300)
+  fix <- dplyr::tibble(trial_nr = 1L, start_time = 100L, avg_x = 250)
+  wb  <- dplyr::tibble(trial_nr = 1L, word_id = 1L, word = "Hello",
+                        x_start = 100, x_end = 300)
+  cb  <- make_char_boundaries()
+
+  monospace_result <- get_landing_info(fix, wb)
+  cb_result        <- get_landing_info(fix, wb, character_boundaries = cb)
+
+  expect_equal(monospace_result$fixated_char, 4L)   # monospace estimate
+  expect_equal(cb_result$fixated_char, 5L)           # data-driven estimate
+})
+
+test_that("get_landing_info falls back to monospace when avg_x not in any char box", {
+  # avg_x = 305 is slightly beyond the last character's x_end (300)
+  # but still within the word boundary (x_end = 310)
+  fix <- dplyr::tibble(trial_nr = 1L, start_time = 100L, avg_x = 305)
+  wb  <- dplyr::tibble(trial_nr = 1L, word_id = 1L, word = "Hello",
+                        x_start = 100, x_end = 310)
+  # Characters only cover 100-300, so 305 falls in a gap
+  cb  <- make_char_boundaries()
+  result <- get_landing_info(fix, wb, character_boundaries = cb)
+  # Falls back to monospace: word_proportion = (305-100)/210 ≈ 0.976
+  # floor(0.976 * 5) + 1 = 5
+  expect_equal(result$fixated_char, 5L)
+})
+
+test_that("get_landing_info character_boundaries uses trial_nr join key", {
+  # Two trials with the same word region but different char widths
+  fix <- dplyr::tibble(
+    trial_nr   = c(1L, 2L),
+    start_time = c(100L, 100L),
+    avg_x      = c(250, 250)
+  )
+  wb <- dplyr::tibble(
+    trial_nr = c(1L, 2L),
+    word_id  = c(1L, 1L),
+    word     = c("Hello", "Hello"),
+    x_start  = c(100, 100),
+    x_end    = c(300, 300)
+  )
+  # Trial 1: avg_x=250 → char 5 (x_start=240, x_end=300)
+  # Trial 2: avg_x=250 → char 4 (x_start=240, x_end=270) in different char layout
+  cb <- dplyr::bind_rows(
+    make_char_boundaries(),
+    dplyr::tibble(
+      trial_nr = rep(2L, 5L),
+      word_id  = rep(1L, 5L),
+      char_id  = 1:5,
+      char     = c("H", "e", "l", "l", "o"),
+      x_start  = c(100, 140, 180, 220, 270),
+      x_end    = c(140, 180, 220, 270, 300)
+    )
+  )
+  result <- get_landing_info(fix, wb, character_boundaries = cb)
+  expect_equal(result$fixated_char[result$trial_nr == 1L], 5L)
+  expect_equal(result$fixated_char[result$trial_nr == 2L], 4L)
+})
+
+test_that("get_landing_info errors when character_boundaries missing required columns", {
+  fix <- dplyr::tibble(trial_nr = 1L, avg_x = 200)
+  wb  <- dplyr::tibble(trial_nr = 1L, word_id = 1L, x_start = 100, x_end = 300)
+  bad_cb <- dplyr::tibble(word_id = 1L, char_id = 1L, x_start = 100)  # no x_end
+  expect_error(get_landing_info(fix, wb, character_boundaries = bad_cb), "x_end")
+})
