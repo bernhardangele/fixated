@@ -16,6 +16,10 @@ CSV files (\code{read_samples_csv()}).
 algorithm (\code{detect_fixations()}).
 \item Clean fixation sequences: merge adjacent short fixations and remove
 outliers (\code{clean_fixations()}).
+\item Extract EyeLink-detected fixations (including average x/y location)
+from parsed events (\code{get_eyelink_fixations()}).
+\item Extract EyeLink-detected saccades (including landing x/y position)
+from parsed events (\code{get_eyelink_saccades()}).
 \item Read word-level regions of interest from a CSV file (\code{read_roi()}).
 \item Compute standard reading-research eye-movement measures per word
 (\code{compute_eye_measures()}): first fixation duration (FFD), gaze
