@@ -411,7 +411,7 @@ read_eyelogic <- function(path,
     # Sort by word_id then char_id
     trial_cb <- trial_cb[order(trial_cb$word_id, trial_cb$char_id), ]
     n_cb     <- nrow(trial_cb)
-    x_starts <- numeric(n_cb)
+    x_starts <- rep(NA_real_, n_cb)
 
     # Build a lookup of word_id -> x_start from (already processed) word_boundaries
     trial_wb <- if (!is.null(word_boundaries) && "x_start" %in% names(word_boundaries)) {
@@ -421,32 +421,30 @@ read_eyelogic <- function(path,
     }
 
     for (i in seq_len(n_cb)) {
-      if (trial_cb$char_id[i] == 1L) {
-        # First character of a word: use the word's x_start
+      if (trial_cb$char_id[i] > 1L) {
+        # Subsequent characters within the same word: x_start = x_end of previous char
+        x_starts[i] <- as.numeric(trial_cb$x_end[i - 1L])
+      } else {
+        # First character of a word: look up the word's x_start from word_boundaries
         wid <- trial_cb$word_id[i]
         if (!is.null(trial_wb) && nrow(trial_wb) > 0L) {
           wb_row <- trial_wb[trial_wb$word_id == wid, ]
           if (nrow(wb_row) > 0L) {
             x_starts[i] <- as.numeric(wb_row$x_start[[1L]])
-            next
-          }
-        }
-        # Fallback: use previous character's x_end, or sentence_start_x default
-        if (i > 1L) {
-          x_starts[i] <- as.numeric(trial_cb$x_end[i - 1L])
-        } else {
-          if (!warned_start_x) {
+          } else if (!warned_start_x) {
             warning(
-              "Word boundaries not available for first-character x_start. ",
-              "Defaulting to 125."
+              "Word boundary not found for trial ", tr, ", word ", wid,
+              ". Setting x_start to NA for affected first character."
             )
             warned_start_x <- TRUE
           }
-          x_starts[i] <- 125
+        } else if (!warned_start_x) {
+          warning(
+            "Word boundaries not available; setting x_start to NA for ",
+            "first characters of words."
+          )
+          warned_start_x <- TRUE
         }
-      } else {
-        # Subsequent characters: x_start = x_end of previous character
-        x_starts[i] <- as.numeric(trial_cb$x_end[i - 1L])
       }
     }
 

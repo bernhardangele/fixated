@@ -69,8 +69,9 @@ test_that("read_eyelogic character_boundaries char_id is sequential per word", {
   result <- read_eyelogic(eyelogic_file)
   cb <- result$character_boundaries
   for (tr in unique(cb$trial_nr)) {
-    for (wid in unique(cb$word_id[cb$trial_nr == tr])) {
-      chars <- cb[cb$trial_nr == tr & cb$word_id == wid, ]
+    trial_cb <- cb[cb$trial_nr == tr, ]
+    for (wid in unique(trial_cb$word_id)) {
+      chars <- trial_cb[trial_cb$word_id == wid, ]
       expect_equal(chars$char_id, seq_len(nrow(chars)),
                    info = sprintf("trial %d word %d char_id not sequential", tr, wid))
     }
@@ -83,9 +84,11 @@ test_that("read_eyelogic character_boundaries x_end matches last character of wo
   wb <- result$word_boundaries
   # The x_end of the last character of each word should equal the word's x_end
   for (tr in unique(cb$trial_nr)) {
-    for (wid in unique(cb$word_id[cb$trial_nr == tr])) {
-      last_char_xend <- max(cb$x_end[cb$trial_nr == tr & cb$word_id == wid])
-      word_xend      <- wb$x_end[wb$trial_nr == tr & wb$word_id == wid]
+    trial_cb <- cb[cb$trial_nr == tr, ]
+    trial_wb <- wb[wb$trial_nr == tr, ]
+    for (wid in unique(trial_cb$word_id)) {
+      last_char_xend <- max(trial_cb$x_end[trial_cb$word_id == wid])
+      word_xend      <- trial_wb$x_end[trial_wb$word_id == wid]
       expect_equal(last_char_xend, word_xend,
                    info = sprintf("trial %d word %d last-char x_end != word x_end", tr, wid))
     }
