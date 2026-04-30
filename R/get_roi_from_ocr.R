@@ -157,11 +157,16 @@ get_roi_from_ocr <- function(
     nzchar(trimws(ocr_result$word))
   ocr_result <- ocr_result[keep, , drop = FALSE]
 
-  # Tesseract's GetUTF8Text() appends a trailing newline to every word token;
-  # strip leading/trailing whitespace so stored values are clean.
-  ocr_result$word <- trimws(as.character(ocr_result$word))
+  # Tesseract's GetUTF8Text() appends a trailing newline to every word token.
+  # Embedded newlines can also appear in pathological cases (e.g. multi-line
+  # layout artefacts).  Any line-break or carriage-return character — whether
+  # trailing or embedded — causes tibble's print method to break column
+  # alignment.  Strip them all, then trim residual leading/trailing whitespace.
+  ocr_result$word <- trimws(
+    gsub("[\n\r\f\v]", "", as.character(ocr_result$word))
+  )
 
-  # Re-filter: trimming may have collapsed some tokens to empty strings.
+  # Re-filter: cleaning may have collapsed some tokens to empty strings.
   ocr_result <- ocr_result[nzchar(ocr_result$word), , drop = FALSE]
 
   # --- Empty result -----------------------------------------------------------

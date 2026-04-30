@@ -47,8 +47,9 @@ test_that("get_roi_from_ocr returns word-level tibble with correct columns", {
   if (nrow(result) > 0L) {
     expect_true(all(result$trial_nr == 3L))
     expect_equal(result$word_id, seq_len(nrow(result)))
-    # Word values must not contain leading/trailing whitespace (e.g. Tesseract
-    # appends a trailing newline to each token from GetUTF8Text()).
+    # Word values must not contain any newline/line-break characters — whether
+    # trailing (Tesseract appends \n from GetUTF8Text()) or embedded.
+    expect_false(any(grepl("[\n\r\f\v]", result$word)))
     expect_equal(result$word, trimws(result$word))
   }
 })
