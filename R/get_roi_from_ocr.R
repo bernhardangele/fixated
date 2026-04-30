@@ -157,14 +157,21 @@ get_roi_from_ocr <- function(
     nzchar(trimws(ocr_result$word))
   ocr_result <- ocr_result[keep, , drop = FALSE]
 
+  # Tesseract's GetUTF8Text() appends a trailing newline to every word token;
+  # strip leading/trailing whitespace so stored values are clean.
+  ocr_result$word <- trimws(as.character(ocr_result$word))
+
+  # Re-filter: trimming may have collapsed some tokens to empty strings.
+  ocr_result <- ocr_result[nzchar(ocr_result$word), , drop = FALSE]
+
   # --- Empty result -----------------------------------------------------------
   if (nrow(ocr_result) == 0L) {
     return(.empty_roi_tibble(level))
   }
 
   # --- Parse bounding boxes ---------------------------------------------------
-  # tesseract::ocr_data() returns bbox as "left top right bottom"
-  # (space-separated integers), which already follows the EyeLink top-left
+  # tesseract::ocr_data() returns bbox as "left,top,right,bottom"
+  # (comma-separated integers), which already follows the EyeLink top-left
   # origin convention.
   bbox_parts <- strsplit(as.character(ocr_result$bbox), "[[:space:],]+")
   x_start <- as.numeric(vapply(bbox_parts, `[[`, character(1L), 1L))
@@ -179,7 +186,7 @@ get_roi_from_ocr <- function(
     return(dplyr::tibble(
       trial_nr = rep(trial_nr, n_words),
       word_id  = seq_len(n_words),
-      word     = as.character(ocr_result$word),
+      word     = ocr_result$word,
       x_start  = x_start,
       x_end    = x_end,
       y_start  = y_start,
@@ -190,7 +197,7 @@ get_roi_from_ocr <- function(
   # --- Character-level output (proportional split of word bbox) ---------------
   char_rows <- vector("list", n_words)
   for (w in seq_len(n_words)) {
-    wrd  <- as.character(ocr_result$word[[w]])
+    wrd  <- ocr_result$word[[w]]
     nch  <- nchar(wrd)
     if (nch == 0L) next
 
