@@ -278,7 +278,7 @@ test_that("compute_eye_measures trial_db: NA t_trial_end falls back to t_display
   expect_equal(w3$n_fixations, 0L)
 })
 
-test_that("compute_eye_measures trial_db: t_trial_end only (no t_display_off) accepted", {
+test_that("compute_eye_measures trial_db: t_trial_end without t_display_off works correctly", {
   # trial_db with t_trial_end but no t_display_off: should work without error
   trial_db <- dplyr::tibble(
     trial_nr     = 1L,

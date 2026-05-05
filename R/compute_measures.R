@@ -223,18 +223,8 @@ compute_eye_measures <- function(
       tr_val  <- all_keys[[trial_col]][[i]]
       tdb_row <- trial_db[trial_db[[trial_col]] == tr_val, , drop = FALSE]
       if (nrow(tdb_row) >= 1L) {
-        disp_on <- tdb_row$t_display_on[[1L]]
-        # Use t_trial_end (end-of-trial message, e.g. stop_trial) as the upper
-        # bound when available and non-NA; fall back to t_display_off for
-        # backwards compatibility with trial_db objects that lack t_trial_end.
-        trial_end <- if ("t_trial_end" %in% names(tdb_row) &&
-                         !is.na(tdb_row$t_trial_end[[1L]])) {
-          tdb_row$t_trial_end[[1L]]
-        } else if ("t_display_off" %in% names(tdb_row)) {
-          tdb_row$t_display_off[[1L]]
-        } else {
-          NA_real_
-        }
+        disp_on   <- tdb_row$t_display_on[[1L]]
+        trial_end <- .get_trial_end_time(tdb_row)
         if (!is.na(disp_on)) {
           if (truncate_at_display_on) {
             # Keep fixations that end after display onset; truncate straddling ones
@@ -326,6 +316,26 @@ compute_eye_measures <- function(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+#' Determine the trial-end upper bound from a single-row trial_db slice
+#'
+#' Prefers `t_trial_end` (end-of-trial message timestamp, e.g. from
+#' `stop_trial`) when the column exists and is not `NA`.  Falls back to
+#' `t_display_off` for backwards compatibility with `trial_db` objects that
+#' were created before `t_trial_end` was added.
+#'
+#' @param tdb_row A single-row data frame from `trial_db`.
+#' @return Numeric scalar or `NA_real_`.
+#' @noRd
+.get_trial_end_time <- function(tdb_row) {
+  if ("t_trial_end" %in% names(tdb_row) && !is.na(tdb_row$t_trial_end[[1L]])) {
+    return(tdb_row$t_trial_end[[1L]])
+  }
+  if ("t_display_off" %in% names(tdb_row)) {
+    return(tdb_row$t_display_off[[1L]])
+  }
+  NA_real_
+}
 
 #' Assign each fixation to a word ROI
 #' @noRd
