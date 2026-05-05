@@ -67,7 +67,11 @@
 #'   `t_display_off`.  When supplied, fixations are filtered to the display
 #'   window for each trial (see `truncate_at_display_on` for details).  `NA`
 #'   values in `t_display_on` or `t_display_off` disable the respective bound
-#'   for that trial.  Defaults to `NULL` (no filtering).
+#'   for that trial.  When `trial_db` also contains a `t_trial_end` column
+#'   (set by [read_asc()] to the end-of-trial message timestamp, e.g.
+#'   `stop_trial`), that value is used as the upper bound instead of
+#'   `t_display_off`, ensuring fixations are counted only up to the true
+#'   end-of-trial event.  Defaults to `NULL` (no filtering).
 #' @param shorttime Numeric scalar or `NULL`.  If non-`NULL`, fixations with
 #'   `duration <= shorttime` (ms) are skipped for FFD, GD, and GPT
 #'   computations and do not terminate the first-pass scan when they fall
@@ -180,10 +184,15 @@ compute_eye_measures <- function(
   # Validate trial_db if provided
   if (!is.null(trial_db)) {
     stopifnot(is.data.frame(trial_db))
-    required_tdb <- c(trial_col, "t_display_on", "t_display_off")
+    required_tdb <- c(trial_col, "t_display_on")
     missing_tdb  <- setdiff(required_tdb, names(trial_db))
     if (length(missing_tdb) > 0L) {
       stop("trial_db is missing columns: ", paste(missing_tdb, collapse = ", "))
+    }
+    has_trial_end   <- "t_trial_end"   %in% names(trial_db)
+    has_display_off <- "t_display_off" %in% names(trial_db)
+    if (!has_trial_end && !has_display_off) {
+      stop("trial_db is missing columns: t_display_off (or t_trial_end for end-of-trial filtering)")
     }
   }
 
@@ -209,13 +218,13 @@ compute_eye_measures <- function(
     trial_fix <- fix_assigned[mask, , drop = FALSE]
     trial_fix <- trial_fix[order(trial_fix$start_time), , drop = FALSE]
 
-    # Filter to display-on / display-off window when trial_db is supplied
+    # Filter to display-on / trial-end window when trial_db is supplied
     if (!is.null(trial_db)) {
       tr_val  <- all_keys[[trial_col]][[i]]
       tdb_row <- trial_db[trial_db[[trial_col]] == tr_val, , drop = FALSE]
       if (nrow(tdb_row) >= 1L) {
-        disp_on  <- tdb_row$t_display_on[[1L]]
-        disp_off <- tdb_row$t_display_off[[1L]]
+        disp_on   <- tdb_row$t_display_on[[1L]]
+        trial_end <- .get_trial_end_time(tdb_row)
         if (!is.na(disp_on)) {
           if (truncate_at_display_on) {
             # Keep fixations that end after display onset; truncate straddling ones
@@ -230,8 +239,8 @@ compute_eye_measures <- function(
             trial_fix <- trial_fix[trial_fix$start_time > disp_on, , drop = FALSE]
           }
         }
-        if (!is.na(disp_off)) {
-          trial_fix <- trial_fix[trial_fix$end_time < disp_off, , drop = FALSE]
+        if (!is.na(trial_end)) {
+          trial_fix <- trial_fix[trial_fix$end_time < trial_end, , drop = FALSE]
         }
       }
     }
@@ -307,6 +316,26 @@ compute_eye_measures <- function(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+#' Determine the trial-end upper bound from a single-row trial_db slice
+#'
+#' Prefers `t_trial_end` (end-of-trial message timestamp, e.g. from
+#' `stop_trial`) when the column exists and is not `NA`.  Falls back to
+#' `t_display_off` for backwards compatibility with `trial_db` objects that
+#' were created before `t_trial_end` was added.
+#'
+#' @param tdb_row A single-row data frame from `trial_db`.
+#' @return Numeric scalar or `NA_real_`.
+#' @noRd
+.get_trial_end_time <- function(tdb_row) {
+  if ("t_trial_end" %in% names(tdb_row) && !is.na(tdb_row$t_trial_end[[1L]])) {
+    return(tdb_row$t_trial_end[[1L]])
+  }
+  if ("t_display_off" %in% names(tdb_row)) {
+    return(tdb_row$t_display_off[[1L]])
+  }
+  NA_real_
+}
 
 #' Assign each fixation to a word ROI
 #' @noRd

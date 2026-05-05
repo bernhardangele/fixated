@@ -243,6 +243,53 @@ test_that("compute_eye_measures trial_db: errors on missing trial_db columns", {
   )
 })
 
+# ---------------------------------------------------------------------------
+# t_trial_end (end-of-trial message) filtering tests
+# ---------------------------------------------------------------------------
+
+test_that("compute_eye_measures trial_db: t_trial_end used as upper bound over t_display_off", {
+  # Set display_off wide (1000) but t_trial_end narrow (500): last fixation
+  # (end_time=750) should be excluded because 750 >= 500.
+  trial_db <- dplyr::tibble(
+    trial_nr      = 1L,
+    t_display_on  = -100L,
+    t_display_off = 1000L,
+    t_trial_end   = 500L
+  )
+  result <- compute_eye_measures(make_test_fixations(), make_test_roi(),
+                                 trial_db = trial_db)
+  # Word 3 (x: 320-420): only fixation end_time=750, which is >= 500 → excluded
+  w3 <- result[result$word_id == 3L, ]
+  expect_equal(w3$n_fixations, 0L)
+})
+
+test_that("compute_eye_measures trial_db: NA t_trial_end falls back to t_display_off", {
+  # t_trial_end is NA: should fall back to t_display_off = 700
+  trial_db <- dplyr::tibble(
+    trial_nr      = 1L,
+    t_display_on  = -100L,
+    t_display_off = 700L,
+    t_trial_end   = NA_integer_
+  )
+  result   <- compute_eye_measures(make_test_fixations(), make_test_roi(),
+                                   trial_db = trial_db)
+  # Word 3: fixation end_time=750 >= 700 → excluded
+  w3 <- result[result$word_id == 3L, ]
+  expect_equal(w3$n_fixations, 0L)
+})
+
+test_that("compute_eye_measures trial_db: t_trial_end without t_display_off works correctly", {
+  # trial_db with t_trial_end but no t_display_off: should work without error
+  trial_db <- dplyr::tibble(
+    trial_nr     = 1L,
+    t_display_on = -100L,
+    t_trial_end  = 1000L
+  )
+  expect_no_error(
+    compute_eye_measures(make_test_fixations(), make_test_roi(), trial_db = trial_db)
+  )
+})
+
 test_that("compute_eye_measures includes unfixated words with NAs", {
   roi <- dplyr::tibble(
     trial_nr = 1L,

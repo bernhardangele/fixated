@@ -29,6 +29,10 @@
 #'   matching on `sentence_number` (in the CSV) with `sentence_nr` (in `trial_db`).
 #'   Variable names are prefixed with `os_` to avoid conflicts.
 #'   Defaults to `NULL` (no external variables loaded).
+#' @param end_trial_message Character scalar.  The MSG text that marks the end
+#'   of each trial (default: `"stop_trial"`).  Change this when your experiment
+#'   uses a different end-of-trial marker, e.g.
+#'   `end_trial_message = "trial_end"`.
 #'
 #' @return A named list with elements:
 #'   \describe{
@@ -89,7 +93,8 @@
 read_eyelogic <- function(path,
                           eyes                 = c("L", "R"),
                           parse_vars           = TRUE,
-                          opensesame_csv_path  = NULL) {
+                          opensesame_csv_path  = NULL,
+                          end_trial_message    = "stop_trial") {
   stopifnot(is.character(path), length(path) == 1L, file.exists(path))
   eyes <- match.arg(eyes, c("L", "R"), several.ok = TRUE)
 
@@ -148,7 +153,8 @@ read_eyelogic <- function(path,
   calibration          <- .parse_eyelogic_calibration(msg_lines, ref_time_micro)
   
   # ---- 6. Parse trial structure -----------------------------------------------
-  trial_db <- .parse_eyelogic_trial_db(msg_lines, parse_vars, ref_time_micro)
+  trial_db <- .parse_eyelogic_trial_db(msg_lines, parse_vars, ref_time_micro,
+                                        end_trial_message)
   
   # Assign trial information to samples
   if (!is.null(trial_db) && nrow(trial_db) > 0L) {
@@ -503,14 +509,19 @@ read_eyelogic <- function(path,
 
 #' Parse trial structure from EyeLogic file
 #'
-#' Uses start_trial and stop_trial messages to define trial boundaries.
+#' Uses start_trial and the configurable end_trial_message to define trial
+#' boundaries.
 #'
 #' @param msg_lines A tibble with MSG lines from the EyeLogic file
 #' @param parse_vars Logical; parse OpenSesame var messages?
 #' @param ref_time_micro Numeric scalar. Reference time in microseconds.
+#' @param end_trial_message Character scalar. The message text that marks the
+#'   end of each trial (default: `"stop_trial"`).
 #' @return Tibble with one row per trial, or NULL if no trials found
 #' @noRd
-.parse_eyelogic_trial_db <- function(msg_lines, parse_vars = TRUE, ref_time_micro = 0) {
+.parse_eyelogic_trial_db <- function(msg_lines, parse_vars = TRUE,
+                                      ref_time_micro = 0,
+                                      end_trial_message = "stop_trial") {
   if (nrow(msg_lines) == 0L) return(NULL)
   
   # Extract timestamps in microseconds
@@ -534,8 +545,8 @@ read_eyelogic <- function(path,
   m_start <- stringr::str_match(msg_content[start_idx], start_pattern)
   trial_nrs <- as.integer(m_start[, 2L]) + 1L
   
-  # Find stop_trial messages
-  stop_pattern <- "^\\s*stop_trial"
+  # Find end-of-trial messages (configurable, default: stop_trial)
+  stop_pattern <- paste0("^\\s*", end_trial_message)
   stop_idx <- which(stringr::str_detect(msg_content, stop_pattern))
   
   # Find DISPLAY ON and DISPLAY OFF messages
