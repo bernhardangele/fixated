@@ -129,6 +129,25 @@ test_that("t_trial_end uses stop_trial timestamp not END timestamp", {
   expect_equal(tdb$t_trial_end[[1L]], stop_ts)
 })
 
+test_that("end_trial_message parameter changes what is used for t_trial_end", {
+  # When end_trial_message is set to a message that doesn't appear in the file,
+  # t_trial_end should be NA for all trials.
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result <- read_asc(asc_file, end_trial_message = "nonexistent_end_message_xyz")
+  tdb    <- result$trial_db
+  expect_true(all(is.na(tdb$t_trial_end)))
+})
+
+test_that("end_trial_message defaults to stop_trial", {
+  asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
+  skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")
+  result_default <- read_asc(asc_file)
+  result_explicit <- read_asc(asc_file, end_trial_message = "stop_trial")
+  expect_equal(result_default$trial_db$t_trial_end,
+               result_explicit$trial_db$t_trial_end)
+})
+
 test_that("clean example has no display or recording restarts", {
   asc_file <- system.file("extdata", "sub_1_example.asc", package = "fixated")
   skip_if_not(file.exists(asc_file), "sub_1_example.asc not found")

@@ -25,16 +25,23 @@
 #'   Currently supported values are `"eyelink_opensesame"` (default) and
 #'   `"custom"`.  For `"eyelink_opensesame"`, the trial start is detected
 #'   from `TRIAL … ITEM … WORD 1` ROI messages written by OpenSesame, and
-#'   the trial end from `stop_trial` MSG lines.  Set to
-#'   `"custom"` and supply `trial_start_pattern`/`trial_end_pattern` for
-#'   other setups.
+#'   the trial end from the MSG line matching `end_trial_message` (default:
+#'   `"stop_trial"`).  Set to `"custom"` and supply
+#'   `trial_start_pattern`/`trial_end_pattern` for other setups.
 #' @param trial_start_pattern Character scalar or `NULL`.  A regular
 #'   expression that matches the **first line** of each trial.  When
 #'   non-`NULL`, overrides the default for `eye_tracker`.  Pass `NULL` (the
 #'   default) to use the pattern implied by `eye_tracker`.
 #' @param trial_end_pattern Character scalar or `NULL`.  A regular expression
 #'   that matches the **last line** (or a line within) each trial.  When
-#'   non-`NULL`, overrides the default for `eye_tracker`.
+#'   non-`NULL`, overrides both `eye_tracker` and `end_trial_message`.
+#' @param end_trial_message Character scalar.  The MSG text that marks the end
+#'   of each trial (default: `"stop_trial"`).  This value is used to build the
+#'   default end-pattern `MSG … <end_trial_message>` when `trial_end_pattern`
+#'   is `NULL`.  Change this when your experiment uses a different end-of-trial
+#'   marker, e.g. `end_trial_message = "trial_end"`.  `"END"` lines are
+#'   intentionally ignored for trial-boundary purposes (they may appear during
+#'   drift-correction or recalibration).
 #' @param parse_vars Logical scalar.  When `TRUE` (default) and
 #'   `eye_tracker = "eyelink_opensesame"`, OpenSesame variable messages of
 #'   the form `MSG … var KEY VALUE` with a single-word value are parsed and
@@ -120,6 +127,7 @@ read_asc <- function(path,
                      eye_tracker          = "eyelink_opensesame",
                      trial_start_pattern  = NULL,
                      trial_end_pattern    = NULL,
+                     end_trial_message    = "stop_trial",
                      parse_vars           = TRUE,
                      char_pattern         = "^MSG\\t\\d+\\s+TRIAL\\s+(\\d+)\\s+ITEM\\s+(\\d+)\\s+WORD\\s+(\\d+)\\s+CHAR\\s+(\\d+)\\s+(\\S+)\\s+(\\d+)",
                      encoding             = "UTF-8") {
@@ -150,7 +158,8 @@ read_asc <- function(path,
   # ---- 3. Resolve trial start/end patterns ---------------------------------
   patterns <- .resolve_trial_patterns(eye_tracker,
                                       trial_start_pattern,
-                                      trial_end_pattern)
+                                      trial_end_pattern,
+                                      end_trial_message)
 
   # ---- 4. Parse trial structure --------------------------------------------
   trial_db <- NULL
@@ -409,9 +418,13 @@ read_asc <- function(path,
 #' Resolve trial start/end patterns from eye_tracker shortcut or user input
 #' @noRd
 .resolve_trial_patterns <- function(eye_tracker,
-                                     user_start = NULL,
-                                     user_end   = NULL) {
-  default_end <- "^END\\b"
+                                     user_start        = NULL,
+                                     user_end          = NULL,
+                                     end_trial_message = "stop_trial") {
+  # Build MSG-based end pattern from the configurable message string.
+  # "END" lines are intentionally not used as trial boundaries; they can appear
+  # during drift-correction or recalibration and should be ignored.
+  default_end <- paste0("^MSG\\t\\d+\\s+", end_trial_message)
 
   if (!is.null(user_start)) {
     return(list(
@@ -423,7 +436,7 @@ read_asc <- function(path,
   if (eye_tracker == "eyelink_opensesame") {
     return(list(
       start = "^MSG\\t\\d+\\s+TRIAL\\s+\\d+\\s+ITEM\\s+\\d+\\s+WORD\\s+1\\b",
-      end   = "^MSG\\t\\d+\\s+stop_trial"
+      end   = default_end
     ))
   }
 
@@ -435,7 +448,8 @@ read_asc <- function(path,
 #'
 #' @param lines Character vector of all lines.
 #' @param start_pattern Regex matching the first line of each trial.
-#' @param end_pattern Regex matching the last line of each trial (e.g. MSG stop_trial or END).
+#' @param end_pattern Regex matching the end-of-trial MSG line (e.g. stop_trial).
+#'   "END" lines are intentionally ignored for trial boundaries.
 #' @param eye_tracker Character scalar identifying the eye-tracker type.
 #' @param parse_vars Logical; parse OpenSesame `var` messages?
 #' @return Tibble with one row per trial, or `NULL` if no trials found.
@@ -506,25 +520,16 @@ read_asc <- function(path,
     list(idx = idx, ts = ts)
   }
 
-  # --- find trial end timestamps and END line indices --------------------------
-  # Always extract END line indices (for counting recording stops per trial)
-  end_idx <- which(stringr::str_starts(lines, "END"))
-  t_ends  <- rep(NA_integer_, n_trials)
-  if (!is.null(end_pattern) && nchar(end_pattern) > 0L) {
-    if (stringr::str_detect(end_pattern, "MSG")) {
-      # MSG-type pattern (e.g. stop_trial) → reuse scan_msg + first_per_trial
-      end_msg <- scan_msg(end_pattern)
-      t_ends  <- first_per_trial(end_msg$idx, end_msg$ts)
-    } else if (length(end_idx) > 0L) {
-      # END-type pattern (e.g. ^END\\b) → extract timestamp from END lines
-      for (i in seq_len(n_trials)) {
-        cands <- end_idx[end_idx >= start_idx[i] & end_idx < next_start[i]]
-        if (length(cands) > 0L) {
-          m_e <- stringr::str_match(lines[cands[1L]], "^END\\s+(\\d+)")
-          if (!is.na(m_e[2L])) t_ends[i] <- as.integer(m_e[2L])
-        }
-      }
-    }
+  # --- find trial end timestamps -----------------------------------------------
+  # Trial end is determined solely by the end_trial_message MSG line
+  # (e.g. "stop_trial").  EyeLink "END" lines are intentionally ignored here
+  # because they can appear during drift-correction or recalibration and should
+  # not be treated as trial boundaries.
+  t_ends <- rep(NA_integer_, n_trials)
+  if (!is.null(end_pattern) && nchar(end_pattern) > 0L &&
+      stringr::str_detect(end_pattern, "MSG")) {
+    end_msg <- scan_msg(end_pattern)
+    t_ends  <- first_per_trial(end_msg$idx, end_msg$ts)
   }
 
   # START line (not a MSG line)
